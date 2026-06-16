@@ -33,11 +33,12 @@ a PEP 440 pre-release suffix: `bN` (beta), `aN` (alpha), or `rcN` (e.g. `0.1.0b1
 **pre-release**, so HACS offers it only to users who enabled "Show beta versions". Cut
 the final `0.1.0` (with its own `## [0.1.0]` changelog section) when ready.
 
-> This integration requires Home Keeper's `triggered` task type. While that is still
-> on a branch (ha-home-keeper#21), ship only betas, and keep the `home-keeper` test
-> pin (`requirements-test.txt`) and `ci/fetch-upstreams.sh` `HK_REF` on the matching
-> branch. Once Home Keeper releases `triggered`, revert those to `@main`/`main` before
-> cutting the first stable `0.1.0`.
+> This integration requires Home Keeper's `triggered` task type, which landed on
+> Home Keeper `main` (ha-home-keeper#21) and shipped in its `0.3.0b1` beta. The
+> `home-keeper` test pin (`requirements-test.txt`) and `ci/fetch-upstreams.sh`
+> `HK_REF` therefore track `main`. Keep this on **beta** releases until Home Keeper
+> cuts a *stable* release containing `triggered`, then the first stable `0.1.0` here
+> can depend on that stable Home Keeper.
 
 ## Constraints
 
