@@ -4,4 +4,7 @@ pytest-homeassistant-custom-component
 
 # Home Keeper provides the test fake (home_keeper.testing) the integration-fake
 # tests run against, and the real integration the docker tier installs.
-home-keeper @ git+https://github.com/prestomation/ha-home-keeper@main
+# TODO: move back to @main once the `triggered` task type (ha-home-keeper#21) is
+# merged — until then pin the matching feature branch so the fake supports
+# triggered tasks + the trigger_task service.
+home-keeper @ git+https://github.com/prestomation/ha-home-keeper@claude/optimistic-sagan-dgrt64

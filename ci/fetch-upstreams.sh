@@ -7,7 +7,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAGE="$ROOT/tests/docker/custom_components"
 HK_REPO="${HK_REPO:-https://github.com/prestomation/ha-home-keeper}"
-HK_REF="${HK_REF:-main}"
+# TODO: move back to "main" once the `triggered` type (ha-home-keeper#21) is merged.
+HK_REF="${HK_REF:-claude/optimistic-sagan-dgrt64}"
 # Battery Notes — the integration this glue bridges to.
 BN_REPO="${BN_REPO:-https://github.com/andrew-codechimp/HA-Battery-Notes}"
 BN_REF="${BN_REF:-main}"
