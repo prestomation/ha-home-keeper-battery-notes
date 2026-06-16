@@ -1,0 +1,14 @@
+{
+  "domain": "home_keeper_battery_notes",
+  "name": "Home Keeper — Battery Notes",
+  "after_dependencies": ["battery_notes", "home_keeper"],
+  "codeowners": ["@prestomation"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/prestomation/ha-home-keeper-battery-notes",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/prestomation/ha-home-keeper-battery-notes/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

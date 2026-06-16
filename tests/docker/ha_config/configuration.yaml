@@ -1,0 +1,14 @@
+homeassistant:
+  name: Glue Test
+  unit_system: metric
+  time_zone: America/New_York
+
+api:
+frontend:
+
+logger:
+  default: info
+  logs:
+    custom_components.home_keeper: debug
+    custom_components.home_keeper_battery_notes: debug
+    custom_components.battery_notes: debug

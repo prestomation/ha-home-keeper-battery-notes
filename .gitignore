@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Docker e2e tier: fetched upstreams + all HA runtime artifacts. Only the seeded
+# fixtures (configuration.yaml + the config-entries storage) are tracked.
+tests/docker/custom_components/
+tests/docker/ha_config/*
+!tests/docker/ha_config/configuration.yaml
+!tests/docker/ha_config/.storage/
+tests/docker/ha_config/.storage/*
+!tests/docker/ha_config/.storage/core.config_entries
