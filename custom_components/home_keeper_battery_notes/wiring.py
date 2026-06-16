@@ -251,5 +251,14 @@ class BatteryNotesGlue:
                 continue
             device = dev_reg.async_get(entity.device_id)
             name = (device.name_by_user or device.name) if device else None
-            low[entity.device_id] = {"name": name or entity.device_id}
+            # Battery Notes exposes battery_type/quantity/level as attributes on the
+            # battery-low sensor, so a reconcile-created task gets the same notes as
+            # one created from a live event (rather than an empty note).
+            attrs = state.attributes
+            low[entity.device_id] = {
+                "name": name or entity.device_id,
+                "battery_type": attrs.get(FIELD_BATTERY_TYPE),
+                "battery_quantity": attrs.get(FIELD_BATTERY_QUANTITY),
+                "battery_level": attrs.get(FIELD_BATTERY_LEVEL),
+            }
         return low
