@@ -21,6 +21,21 @@ def _count(api) -> int:
     return int(api.state(TODO) or 0)
 
 
+def test_battery_notes_service_contract(api):
+    """Guard the external Battery Notes contract this glue depends on.
+
+    The event-driven tests below fire synthetic events (we can't easily provision a
+    real Battery Notes device in CI), so they don't catch Battery Notes *renaming*
+    its two-way service. Assert the real, installed Battery Notes still exposes
+    ``battery_notes.set_battery_replaced`` — if this fails, the two-way sync target
+    moved and const.py needs updating.
+    """
+    assert api.has_service("battery_notes", "set_battery_replaced"), (
+        "battery_notes.set_battery_replaced is missing — the Battery Notes service "
+        "contract changed; update const.BN_SERVICE_SET_REPLACED."
+    )
+
+
 def test_low_then_replaced_arms_then_clears_the_task(api):
     base = _count(api)
 

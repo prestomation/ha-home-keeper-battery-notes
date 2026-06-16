@@ -8,12 +8,14 @@ Home Keeper (or Battery Notes) isn't present.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import Event, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from . import logic
@@ -50,6 +52,11 @@ class BatteryNotesGlue:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entry = entry
+        # Serialize the list-tasks → decide → execute span so two rapid Battery
+        # Notes events (it re-fires on coordinator refresh) can't both read an empty
+        # task list and each create a task. The glue is stateless, so this lock is
+        # the only thing preventing a create/create interleave.
+        self._lock = asyncio.Lock()
 
     # ── options ──────────────────────────────────────────────────────────────
     @property
@@ -134,33 +141,35 @@ class BatteryNotesGlue:
         device_id = data.get(FIELD_DEVICE_ID)
         if not device_id:
             return
-        tasks = await self._list_tasks()
-        if data.get(FIELD_BATTERY_LOW):
-            action = logic.plan_battery_low(
-                tasks,
-                device_id=device_id,
-                device_name=data.get(FIELD_DEVICE_NAME) or device_id,
-                config_entry_id=self.entry.entry_id,
-                name_template=self._name_template,
-                battery_type=data.get(FIELD_BATTERY_TYPE),
-                battery_quantity=data.get(FIELD_BATTERY_QUANTITY),
-                battery_level=data.get(FIELD_BATTERY_LEVEL),
-            )
-        elif self._clear_on_recovery:
-            action = logic.plan_battery_cleared(tasks, device_id=device_id)
-        else:
-            action = None
-        if action is not None:
-            await self._execute(action)
+        async with self._lock:
+            tasks = await self._list_tasks()
+            if data.get(FIELD_BATTERY_LOW):
+                action = logic.plan_battery_low(
+                    tasks,
+                    device_id=device_id,
+                    device_name=data.get(FIELD_DEVICE_NAME) or device_id,
+                    config_entry_id=self.entry.entry_id,
+                    name_template=self._name_template,
+                    battery_type=data.get(FIELD_BATTERY_TYPE),
+                    battery_quantity=data.get(FIELD_BATTERY_QUANTITY),
+                    battery_level=data.get(FIELD_BATTERY_LEVEL),
+                )
+            elif self._clear_on_recovery:
+                action = logic.plan_battery_cleared(tasks, device_id=device_id)
+            else:
+                action = None
+            if action is not None:
+                await self._execute(action)
 
     async def _on_replaced(self, event: Event) -> None:
         device_id = event.data.get(FIELD_DEVICE_ID)
         if not device_id:
             return
-        tasks = await self._list_tasks()
-        action = logic.plan_battery_cleared(tasks, device_id=device_id)
-        if action is not None:
-            await self._execute(action)
+        async with self._lock:
+            tasks = await self._list_tasks()
+            action = logic.plan_battery_cleared(tasks, device_id=device_id)
+            if action is not None:
+                await self._execute(action)
 
     async def _on_hk_completed(self, event: Event) -> None:
         """Two-way sync: mirror a Home-Keeper-side completion to Battery Notes.
@@ -181,12 +190,20 @@ class BatteryNotesGlue:
         if not device_id:
             return
         if self.hass.services.has_service(BN_DOMAIN, BN_SERVICE_SET_REPLACED):
-            await self.hass.services.async_call(
-                BN_DOMAIN,
-                BN_SERVICE_SET_REPLACED,
-                {FIELD_DEVICE_ID: device_id},
-                blocking=True,
-            )
+            try:
+                await self.hass.services.async_call(
+                    BN_DOMAIN,
+                    BN_SERVICE_SET_REPLACED,
+                    {FIELD_DEVICE_ID: device_id},
+                    blocking=True,
+                )
+            except HomeAssistantError as err:
+                # Battery Notes rejects an unknown/removed device. Don't let a stale
+                # task's mirror attempt bubble an exception out of the event listener.
+                _LOGGER.debug(
+                    "set_battery_replaced failed for device %s: %s", device_id, err
+                )
+                return
             _LOGGER.debug("Mirrored completion to Battery Notes for device %s", device_id)
 
     # ── startup reconcile ────────────────────────────────────────────────────
@@ -199,22 +216,23 @@ class BatteryNotesGlue:
         """
         if not self._hk_ready("list_tasks"):
             return
-        low_devices = self._current_low_devices()
-        tasks = await self._list_tasks()
-        actions = logic.plan_reconcile(
-            tasks,
-            low_devices,
-            config_entry_id=self.entry.entry_id,
-            name_template=self._name_template,
-        )
-        for action in actions:
-            # Honour the clear-on-recovery option during reconcile too: skip clears
-            # for recovered batteries if the user disabled automatic recovery.
-            if isinstance(action, logic.ClearTask) and not self._clear_on_recovery:
-                continue
-            await self._execute(action)
-        if actions:
-            _LOGGER.debug("Reconcile applied %d action(s)", len(actions))
+        async with self._lock:
+            low_devices = self._current_low_devices()
+            tasks = await self._list_tasks()
+            actions = logic.plan_reconcile(
+                tasks,
+                low_devices,
+                config_entry_id=self.entry.entry_id,
+                name_template=self._name_template,
+            )
+            for action in actions:
+                # Honour the clear-on-recovery option during reconcile too: skip clears
+                # for recovered batteries if the user disabled automatic recovery.
+                if isinstance(action, logic.ClearTask) and not self._clear_on_recovery:
+                    continue
+                await self._execute(action)
+            if actions:
+                _LOGGER.debug("Reconcile applied %d action(s)", len(actions))
 
     def _current_low_devices(self) -> dict[str, dict[str, Any]]:
         """Battery Notes devices currently reporting low, keyed by device_id."""

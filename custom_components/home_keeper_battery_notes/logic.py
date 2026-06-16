@@ -61,11 +61,17 @@ Action = CreateTask | ArmTask | ClearTask
 
 
 # ── helpers over the Home Keeper task list ───────────────────────────────────
+def _is_ours(task: Any) -> bool:
+    """Whether *task* is a well-formed task dict we own (has an id + our source ns)."""
+    if not isinstance(task, dict) or not task.get("id"):
+        return False
+    return isinstance((task.get("source") or {}).get(SOURCE_NS), dict)
+
+
 def task_for_device(tasks: list[dict], device_id: str) -> dict | None:
     """Return our task for *device_id* (matched by our ``source`` namespace), or None."""
     for task in tasks:
-        src = (task.get("source") or {}).get(SOURCE_NS)
-        if isinstance(src, dict) and src.get("device_id") == device_id:
+        if _is_ours(task) and task["source"][SOURCE_NS].get("device_id") == device_id:
             return task
     return None
 
@@ -76,8 +82,8 @@ def is_armed(task: dict) -> bool:
 
 
 def our_tasks(tasks: list[dict]) -> list[dict]:
-    """Every task we own (carries our ``source`` namespace)."""
-    return [t for t in tasks if isinstance((t.get("source") or {}).get(SOURCE_NS), dict)]
+    """Every well-formed task we own (carries our ``source`` namespace + an id)."""
+    return [t for t in tasks if _is_ours(t)]
 
 
 # ── payload construction ─────────────────────────────────────────────────────

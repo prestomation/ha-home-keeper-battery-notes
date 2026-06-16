@@ -113,6 +113,22 @@ def test_reconcile_ignores_foreign_tasks():
     assert L.plan_reconcile(tasks, {}, config_entry_id=CFG, name_template=TMPL) == []
 
 
+def test_malformed_tasks_are_ignored():
+    # Defensive: a non-dict entry or a task missing "id" must not match or crash.
+    malformed = [
+        "not-a-dict",
+        {"source": {"home_keeper_battery_notes": {"device_id": "dev1"}}},  # no id
+        {"id": "x", "source": {"other": {"device_id": "dev1"}}},  # not ours
+    ]
+    assert L.task_for_device(malformed, "dev1") is None
+    assert L.our_tasks(malformed) == []
+    # And a low event for that device creates a fresh task rather than KeyError-ing.
+    action = L.plan_battery_low(
+        malformed, device_id="dev1", device_name="x", config_entry_id=CFG, name_template=TMPL
+    )
+    assert isinstance(action, L.CreateTask)
+
+
 def test_name_template_falls_back_on_bad_template():
     action = L.plan_battery_low(
         [], device_id="d", device_name="Garage", config_entry_id=CFG,
