@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "core.config_entries",
+  "data": {
+    "entries": [
+      {
+        "entry_id": "home_keeper_e2e_entry",
+        "version": 1,
+        "minor_version": 1,
+        "domain": "home_keeper",
+        "title": "Home Keeper",
+        "data": {},
+        "options": {},
+        "pref_disable_new_entities": false,
+        "pref_disable_polling": false,
+        "source": "user",
+        "unique_id": "home_keeper_local",
+        "disabled_by": null
+      },
+      {
+        "entry_id": "hk_battery_notes_e2e_entry",
+        "version": 1,
+        "minor_version": 1,
+        "domain": "home_keeper_battery_notes",
+        "title": "Battery Notes",
+        "data": {},
+        "options": {},
+        "pref_disable_new_entities": false,
+        "pref_disable_polling": false,
+        "source": "user",
+        "unique_id": "home_keeper_battery_notes",
+        "disabled_by": null
+      }
+    ]
+  }
+}

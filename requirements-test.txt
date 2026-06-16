@@ -1,0 +1,8 @@
+pytest
+pytest-asyncio
+pytest-homeassistant-custom-component
+
+# Home Keeper provides the test fake (home_keeper.testing) the integration-fake
+# tests run against, and the real integration the docker tier installs. The
+# triggered task type this glue needs is on main as of ha-home-keeper#21.
+home-keeper @ git+https://github.com/prestomation/ha-home-keeper@main

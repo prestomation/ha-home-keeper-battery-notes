@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home Keeper — Battery Notes",
+        "description": "Create a Home Keeper task when a Battery Notes battery goes low, and clear it (recording the replacement) when the battery is replaced. Requires both Home Keeper and Battery Notes."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Already configured. Only a single instance is needed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Battery Notes glue options",
+        "data": {
+          "name_template": "Task name template",
+          "two_way": "Two-way sync (completing in Home Keeper marks the battery replaced)",
+          "clear_on_recovery": "Clear the task when the battery level recovers on its own"
+        },
+        "data_description": {
+          "name_template": "Use {device_name} for the battery's device. Default: \"Replace battery: {device_name}\"."
+        }
+      }
+    }
+  }
+}
