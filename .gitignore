@@ -12,3 +12,6 @@ tests/docker/ha_config/*
 !tests/docker/ha_config/.storage/
 tests/docker/ha_config/.storage/*
 !tests/docker/ha_config/.storage/core.config_entries
+
+# Release build artifact (built by ci/build-zip.sh)
+home_keeper_battery_notes.zip
