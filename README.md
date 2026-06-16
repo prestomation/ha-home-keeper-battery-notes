@@ -23,6 +23,20 @@ It uses Home Keeper's **`triggered`** (condition-driven) task type and is comple
 decoupled: it talks to both integrations only over the Home Assistant event bus and
 services, with `has_service` guards, so nothing breaks if one is missing.
 
+When a battery goes low, the task shows up **due now** in Home Keeper, *Managed by
+Battery Notes*:
+
+![A low battery becomes a due task in Home Keeper](docs/images/flow-1-battery-low.png)
+
+After it's replaced, the task records the change and tucks into the collapsed
+**Monitored** section (note the retained completion) until it's needed again:
+
+![The replaced battery's task goes dormant in the Monitored section](docs/images/flow-2-monitored.png)
+
+> These screenshots are produced by the browser e2e tier (`tests/e2e/`) driving the
+> real stack — Home Assistant + Home Keeper + Battery Notes + this glue — so they
+> always reflect current behaviour.
+
 ## How it works
 
 | Battery Notes signal | What the glue does |
@@ -59,10 +73,14 @@ Three tiers (see `ci/`):
 - **`ci/test-integration.sh`** — the glue against Home Keeper's real test fake
   (`home_keeper.testing`) in a HA test runtime: arm/clear/re-arm, two-way sync, and
   idempotency.
-- **`ci/test-docker.sh`** — full end-to-end: **real** Home Keeper + Battery Notes + this
-  glue in a Home Assistant container, driven over REST. `ci/fetch-upstreams.sh` clones
-  the two upstreams (pin with `HK_REF` / `BN_REF`); this tier also serves as the
-  contract test for Battery Notes' event shapes.
+- **`ci/test-docker.sh`** — full end-to-end (REST): **real** Home Keeper + Battery Notes
+  + this glue in a Home Assistant container. `ci/fetch-upstreams.sh` clones the two
+  upstreams (pin with `HK_REF` / `BN_REF`); this tier also serves as the contract test
+  for Battery Notes' event shapes.
+- **`ci/e2e-up.sh`** — browser end-to-end: the same real stack, but `fetch-upstreams`
+  also **builds the Home Keeper panel** and Playwright (`tests/e2e/`) fires Battery
+  Notes events and asserts/screenshots the **real Home Keeper panel** (the screenshots
+  above). Run `SHOT_DIR=docs/images CAPTURE=1 bash ci/e2e-up.sh` to refresh the images.
 
 > **External contract note.** Battery Notes' event/field names are an external surface
 > this glue depends on (see `const.py`). They're pinned and asserted by the Docker tier;

@@ -33,5 +33,15 @@ fetch() {
 fetch "$HK_REPO" "$HK_REF" "home_keeper"
 fetch "$BN_REPO" "$BN_REF" "battery_notes"
 
+# Home Keeper ships its panel JS as a build artifact (gitignored), so a fresh clone
+# has only the TypeScript source. Build it here so the panel actually renders in the
+# container — required for the browser/screenshot tier. Skipped gracefully if there's
+# no frontend (e.g. a future Home Keeper layout) so the REST-only tier still works.
+HK_FRONTEND="$STAGE/home_keeper/frontend"
+if [ -f "$HK_FRONTEND/package.json" ] && [ "${SKIP_PANEL_BUILD:-0}" != "1" ]; then
+  echo "[fetch-upstreams] building Home Keeper panel..."
+  (cd "$HK_FRONTEND" && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund) && npm run build)
+fi
+
 echo "[fetch-upstreams] staged:"
 ls -1 "$STAGE"
