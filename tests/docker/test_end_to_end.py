@@ -13,27 +13,53 @@ these assertions fail.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 TODO = "todo.home_keeper_tasks"
 DEVICE = "e2e_battery_device"
+
+# The Battery Notes surface this glue depends on (mirrors const.py). The static
+# contract test below checks these still exist in the *fetched, real* Battery Notes.
+BN_SERVICE_SET_REPLACED = "set_battery_replaced"
+BN_EVENTS = ("battery_notes_battery_threshold", "battery_notes_battery_replaced")
+
+# Where ci/fetch-upstreams.sh stages the real Battery Notes for the docker tier.
+_BN_DIR = Path(__file__).resolve().parent / "custom_components" / "battery_notes"
 
 
 def _count(api) -> int:
     return int(api.state(TODO) or 0)
 
 
-def test_battery_notes_service_contract(api):
+def test_battery_notes_contract_against_real_source():
     """Guard the external Battery Notes contract this glue depends on.
 
-    The event-driven tests below fire synthetic events (we can't easily provision a
-    real Battery Notes device in CI), so they don't catch Battery Notes *renaming*
-    its two-way service. Assert the real, installed Battery Notes still exposes
-    ``battery_notes.set_battery_replaced`` — if this fails, the two-way sync target
-    moved and const.py needs updating.
+    The event-driven tests fire synthetic events (provisioning a real Battery Notes
+    device — a 4-version, sub-entry config model — in CI is out of scope), so they
+    can't catch Battery Notes *renaming* the service or events the glue is coupled
+    to. Instead assert those names still exist in the fetched, real Battery Notes
+    source. If this fails, Battery Notes moved its surface — update const.py and
+    re-pin BN_REF.
     """
-    assert api.has_service("battery_notes", "set_battery_replaced"), (
-        "battery_notes.set_battery_replaced is missing — the Battery Notes service "
-        "contract changed; update const.BN_SERVICE_SET_REPLACED."
+    if not _BN_DIR.is_dir():
+        pytest.skip("Battery Notes not staged (run ci/fetch-upstreams.sh first)")
+
+    services_yaml = (_BN_DIR / "services.yaml").read_text(encoding="utf-8")
+    assert f"{BN_SERVICE_SET_REPLACED}:" in services_yaml, (
+        f"battery_notes.{BN_SERVICE_SET_REPLACED} no longer declared — the two-way "
+        "sync target moved; update const.BN_SERVICE_SET_REPLACED."
     )
+
+    # The event names the glue listens for must still appear in Battery Notes' code.
+    source_text = "\n".join(
+        p.read_text(encoding="utf-8") for p in _BN_DIR.rglob("*.py")
+    )
+    for event in BN_EVENTS:
+        assert event in source_text, (
+            f"Battery Notes no longer references the '{event}' event — update const.py."
+        )
 
 
 def test_low_then_replaced_arms_then_clears_the_task(api):

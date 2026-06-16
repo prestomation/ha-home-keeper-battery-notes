@@ -121,12 +121,4 @@ def api(token):
                 f"{entity_id} did not reach {want!r} (last={last!r})"
             )
 
-        def has_service(self, domain: str, service: str) -> bool:
-            r = requests.get(f"{HA_URL}/api/services", headers=self.headers, timeout=10)
-            r.raise_for_status()
-            for entry in r.json():
-                if entry.get("domain") == domain and service in (entry.get("services") or {}):
-                    return True
-            return False
-
     return _Api()
