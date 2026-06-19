@@ -22,8 +22,12 @@ DEVICE = "e2e_battery_device"
 
 # The Battery Notes surface this glue depends on (mirrors const.py). The static
 # contract test below checks these still exist in the *fetched, real* Battery Notes.
-BN_SERVICE_SET_REPLACED = "set_battery_replaced"
-BN_EVENTS = ("battery_notes_battery_threshold", "battery_notes_battery_replaced")
+BN_SERVICES = ("set_battery_replaced", "check_battery_last_reported")
+BN_EVENTS = (
+    "battery_notes_battery_threshold",
+    "battery_notes_battery_replaced",
+    "battery_notes_battery_not_reported",
+)
 
 # Where ci/fetch-upstreams.sh stages the real Battery Notes for the docker tier.
 _BN_DIR = Path(__file__).resolve().parent / "custom_components" / "battery_notes"
@@ -47,10 +51,11 @@ def test_battery_notes_contract_against_real_source():
         pytest.skip("Battery Notes not staged (run ci/fetch-upstreams.sh first)")
 
     services_yaml = (_BN_DIR / "services.yaml").read_text(encoding="utf-8")
-    assert f"{BN_SERVICE_SET_REPLACED}:" in services_yaml, (
-        f"battery_notes.{BN_SERVICE_SET_REPLACED} no longer declared — the two-way "
-        "sync target moved; update const.BN_SERVICE_SET_REPLACED."
-    )
+    for service in BN_SERVICES:
+        assert f"{service}:" in services_yaml, (
+            f"battery_notes.{service} no longer declared — a service the glue calls "
+            "moved; update const.py (BN_SERVICE_*)."
+        )
 
     # The event names the glue listens for must still appear in Battery Notes' code.
     source_text = "\n".join(

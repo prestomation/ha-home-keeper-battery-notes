@@ -99,14 +99,31 @@ def _format_name(name_template: str, device_name: str) -> str:
         return f"Replace battery: {device_name}"
 
 
-def _format_notes(battery_type: Any, battery_quantity: Any, battery_level: Any) -> str:
-    """Compact battery description for the task notes (best-effort, may be empty)."""
+def _format_notes(
+    battery_type: Any,
+    battery_quantity: Any,
+    battery_level: Any,
+    *,
+    reason: str = "low",
+    last_reported_days: Any = None,
+) -> str:
+    """Compact battery description for the task notes (best-effort, may be empty).
+
+    *reason* tailors the why: a ``"low"`` battery records the level it was at; a
+    ``"not_reported"`` (suspected-dead) one records how long it's been dark, so the
+    task explains itself at a glance rather than looking like a normal low battery.
+    """
     bits: list[str] = []
     if battery_quantity and battery_type:
         bits.append(f"{battery_quantity}× {battery_type}")
     elif battery_type:
         bits.append(str(battery_type))
-    if battery_level not in (None, ""):
+    if reason == "not_reported":
+        if last_reported_days not in (None, ""):
+            bits.append(f"not reporting for {last_reported_days} days")
+        else:
+            bits.append("not reporting")
+    elif battery_level not in (None, ""):
         bits.append(f"was at {battery_level}%")
     return " · ".join(bits)
 
@@ -120,6 +137,8 @@ def build_add_task_payload(
     battery_type: Any = None,
     battery_quantity: Any = None,
     battery_level: Any = None,
+    reason: str = "low",
+    last_reported_days: Any = None,
 ) -> dict[str, Any]:
     """The ``home_keeper.add_task`` payload for a new battery task (born armed).
 
@@ -131,7 +150,13 @@ def build_add_task_payload(
     """
     return {
         "name": _format_name(name_template, device_name),
-        "notes": _format_notes(battery_type, battery_quantity, battery_level),
+        "notes": _format_notes(
+            battery_type,
+            battery_quantity,
+            battery_level,
+            reason=reason,
+            last_reported_days=last_reported_days,
+        ),
         "recurrence_type": "triggered",
         "device_id": device_id,
         "source": {SOURCE_NS: {"device_id": device_id}},
@@ -158,10 +183,16 @@ def plan_battery_low(
     battery_type: Any = None,
     battery_quantity: Any = None,
     battery_level: Any = None,
+    reason: str = "low",
+    last_reported_days: Any = None,
 ) -> Action | None:
-    """Decide what to do when *device_id* reports a low battery.
+    """Decide what to do when *device_id* needs a battery replaced.
 
-    Absent → create (born armed). Dormant → arm. Already armed → nothing.
+    Drives both signals — a battery crossing the *low* threshold and one that's
+    stopped reporting (``reason="not_reported"``, suspected dead) — into the same
+    create-or-arm decision keyed on the device, so a battery that's low and then goes
+    dark never produces a second task. Absent → create (born armed). Dormant → arm.
+    Already armed → nothing.
     """
     task = task_for_device(tasks, device_id)
     if task is None:
@@ -175,6 +206,8 @@ def plan_battery_low(
                 battery_type=battery_type,
                 battery_quantity=battery_quantity,
                 battery_level=battery_level,
+                reason=reason,
+                last_reported_days=last_reported_days,
             ),
         )
     if is_armed(task):
@@ -196,6 +229,7 @@ def plan_battery_cleared(tasks: list[dict], *, device_id: str) -> Action | None:
 def plan_reconcile(
     tasks: list[dict],
     low_devices: dict[str, dict[str, Any]],
+    recovered_devices: set[str],
     *,
     config_entry_id: str,
     name_template: str,
@@ -203,9 +237,14 @@ def plan_reconcile(
     """Converge the full state at startup (catch up on signals missed while down).
 
     *low_devices* maps ``device_id`` → its info (name + optional battery fields) for
-    every Battery Notes device currently reporting low. Every low device gets a
-    created/armed task; every task we own whose device is **not** low and is still
-    armed gets cleared. Idempotent no-ops are dropped.
+    every Battery Notes device currently reporting low; each gets a created/armed task.
+
+    Clearing is **affirmative**: we only clear an armed task whose device is in
+    *recovered_devices* — a battery that's actually reporting a not-low level again
+    (its low sensor reads ``off``). A device that's merely absent/unknown/unavailable
+    is *not* treated as recovered: that's exactly the suspected-dead case, and
+    clearing it would record a phantom replacement (and fight the not-reported path).
+    Idempotent no-ops are dropped.
     """
     actions: list[Action] = []
     for device_id, info in low_devices.items():
@@ -222,9 +261,8 @@ def plan_reconcile(
         if action is not None:
             actions.append(action)
 
-    low_ids = set(low_devices)
     for task in our_tasks(tasks):
         device_id = (task["source"][SOURCE_NS]).get("device_id")
-        if device_id not in low_ids and is_armed(task):
+        if device_id in recovered_devices and is_armed(task):
             actions.append(ClearTask(task["id"], device_id))
     return actions

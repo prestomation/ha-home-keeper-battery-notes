@@ -81,11 +81,55 @@ def test_clear_dormant_or_absent_is_noop():
     assert L.plan_battery_cleared([], device_id="dev1") is None
 
 
+# ── not reported (suspected dead) ────────────────────────────────────────────
+def test_not_reported_with_no_task_creates_armed_task_with_dead_notes():
+    action = L.plan_battery_low(
+        [],
+        device_id="dev1",
+        device_name="Hall sensor",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        battery_type="CR2032",
+        battery_quantity=1,
+        reason="not_reported",
+        last_reported_days=12,
+    )
+    assert isinstance(action, L.CreateTask)
+    notes = action.payload["notes"]
+    assert "CR2032" in notes
+    assert "not reporting for 12 days" in notes
+    assert "%" not in notes  # no spurious "was at None%"
+
+
+def test_not_reported_without_days_still_notes_not_reporting():
+    action = L.plan_battery_low(
+        [], device_id="d", device_name="x", config_entry_id=CFG,
+        name_template=TMPL, reason="not_reported",
+    )
+    assert isinstance(action, L.CreateTask)
+    assert action.payload["notes"] == "not reporting"
+
+
+def test_not_reported_reuses_existing_task_no_duplicate():
+    # A battery already low (armed) that then goes dark must not spawn a second task.
+    tasks = [_task("dev1", next_due="2026-06-01T00:00:00-04:00")]
+    assert L.plan_battery_low(
+        tasks, device_id="dev1", device_name="x", config_entry_id=CFG,
+        name_template=TMPL, reason="not_reported",
+    ) is None
+    # Dormant task -> just re-arm it (keeps history), still no new task.
+    dormant = [_task("dev1", next_due=None)]
+    assert L.plan_battery_low(
+        dormant, device_id="dev1", device_name="x", config_entry_id=CFG,
+        name_template=TMPL, reason="not_reported",
+    ) == L.ArmTask("task_dev1", "dev1")
+
+
 # ── reconcile ────────────────────────────────────────────────────────────────
 def test_reconcile_creates_arms_and_clears_to_converge():
     tasks = [
         _task("low_known_dormant", next_due=None),       # low now -> arm
-        _task("recovered_still_armed", next_due="2026-06-01T00:00:00-04:00"),  # not low -> clear
+        _task("recovered_still_armed", next_due="2026-06-01T00:00:00-04:00"),  # off -> clear
         _task("low_already_armed", next_due="2026-06-01T00:00:00-04:00"),       # low + armed -> noop
     ]
     low = {
@@ -93,7 +137,10 @@ def test_reconcile_creates_arms_and_clears_to_converge():
         "low_already_armed": {"name": "B"},
         "brand_new_low": {"name": "C"},                  # no task -> create
     }
-    actions = L.plan_reconcile(tasks, low, config_entry_id=CFG, name_template=TMPL)
+    recovered = {"recovered_still_armed"}
+    actions = L.plan_reconcile(
+        tasks, low, recovered, config_entry_id=CFG, name_template=TMPL
+    )
 
     kinds = {type(a) for a in actions}
     assert L.CreateTask in kinds and L.ArmTask in kinds and L.ClearTask in kinds
@@ -107,10 +154,23 @@ def test_reconcile_creates_arms_and_clears_to_converge():
     )
 
 
+def test_reconcile_does_not_clear_armed_task_for_silent_device():
+    # A device that's neither low nor affirmatively recovered (e.g. dead/unknown, so
+    # absent from both sets) must keep its armed task — clearing it would record a
+    # phantom replacement and fight the not-reported path.
+    tasks = [_task("gone_dark", next_due="2026-06-01T00:00:00-04:00")]
+    actions = L.plan_reconcile(
+        tasks, {}, set(), config_entry_id=CFG, name_template=TMPL
+    )
+    assert actions == []
+
+
 def test_reconcile_ignores_foreign_tasks():
     tasks = [_task("dev1", extra_source={"pawsistant": {"x": 1}}, next_due="2026-01-01T00:00:00-04:00")]
-    # No low devices and the only task isn't ours -> nothing to do.
-    assert L.plan_reconcile(tasks, {}, config_entry_id=CFG, name_template=TMPL) == []
+    # No low devices, none recovered, and the only task isn't ours -> nothing to do.
+    assert L.plan_reconcile(
+        tasks, {}, set(), config_entry_id=CFG, name_template=TMPL
+    ) == []
 
 
 def test_malformed_tasks_are_ignored():

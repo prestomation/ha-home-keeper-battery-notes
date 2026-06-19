@@ -21,11 +21,15 @@ from homeassistant.core import callback
 from .const import (
     DEFAULT_CLEAR_ON_RECOVERY,
     DEFAULT_NAME_TEMPLATE,
+    DEFAULT_NOT_REPORTED_DAYS,
+    DEFAULT_TREAT_NOT_REPORTED,
     DEFAULT_TWO_WAY,
     DOMAIN,
     MANAGED_DISPLAY_NAME,
     OPT_CLEAR_ON_RECOVERY,
     OPT_NAME_TEMPLATE,
+    OPT_NOT_REPORTED_DAYS,
+    OPT_TREAT_NOT_REPORTED,
     OPT_TWO_WAY,
 )
 
@@ -75,6 +79,18 @@ class BatteryNotesGlueOptionsFlow(OptionsFlow):
                     OPT_CLEAR_ON_RECOVERY,
                     default=opts.get(OPT_CLEAR_ON_RECOVERY, DEFAULT_CLEAR_ON_RECOVERY),
                 ): bool,
+                vol.Optional(
+                    OPT_TREAT_NOT_REPORTED,
+                    default=opts.get(
+                        OPT_TREAT_NOT_REPORTED, DEFAULT_TREAT_NOT_REPORTED
+                    ),
+                ): bool,
+                vol.Optional(
+                    OPT_NOT_REPORTED_DAYS,
+                    default=opts.get(
+                        OPT_NOT_REPORTED_DAYS, DEFAULT_NOT_REPORTED_DAYS
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
