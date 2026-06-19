@@ -16,12 +16,17 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.home_keeper_battery_notes.const import (
     BN_DOMAIN,
+    BN_EVENT_NOT_REPORTED,
     BN_EVENT_REPLACED,
     BN_EVENT_THRESHOLD,
+    BN_FIELD_DAYS_LAST_REPORTED,
+    BN_SERVICE_CHECK_LAST_REPORTED,
     BN_SERVICE_SET_REPLACED,
     DOMAIN,
     HK_DOMAIN,
     OPT_CLEAR_ON_RECOVERY,
+    OPT_NOT_REPORTED_DAYS,
+    OPT_TREAT_NOT_REPORTED,
 )
 
 try:
@@ -62,6 +67,23 @@ async def _fire_threshold(hass: HomeAssistant, *, low: bool) -> None:
         {"device_id": DEVICE, "device_name": "Front door sensor", "battery_low": low},
     )
     await hass.async_block_till_done()
+
+
+def _make_bn_low_sensor(hass: HomeAssistant, *, unique: str, state: str) -> str:
+    """Register a Battery Notes battery-low binary sensor in *state*; return device_id."""
+    bn_entry = MockConfigEntry(domain=BN_DOMAIN, data={})
+    bn_entry.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=bn_entry.entry_id,
+        identifiers={(BN_DOMAIN, unique)},
+        name=f"{unique} sensor",
+    )
+    ent = er.async_get(hass).async_get_or_create(
+        "binary_sensor", BN_DOMAIN, f"{unique}_low",
+        device_id=device.id, original_device_class="battery",
+    )
+    hass.states.async_set(ent.entity_id, state)
+    return device.id
 
 
 async def test_low_creates_armed_task(hass: HomeAssistant) -> None:
@@ -172,8 +194,8 @@ async def test_concurrent_low_events_do_not_duplicate(hass: HomeAssistant) -> No
 
 
 async def test_reconcile_skips_clear_when_recovery_disabled(hass: HomeAssistant) -> None:
-    # With clear_on_recovery off, a startup reconcile (no Battery Notes entities, so
-    # the device reads as "not low") must NOT clear an armed task.
+    # With clear_on_recovery off, a startup reconcile must NOT clear an armed task even
+    # for a device whose battery affirmatively recovered (low sensor reads "off").
     hk = await async_setup_fake_home_keeper(hass)
     entry = MockConfigEntry(
         domain=DOMAIN, data={}, options={OPT_CLEAR_ON_RECOVERY: False}
@@ -181,13 +203,55 @@ async def test_reconcile_skips_clear_when_recovery_disabled(hass: HomeAssistant)
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    await _fire_threshold(hass, low=True)
-    assert hk.get_task_by_source(DOMAIN, device_id=DEVICE)["next_due"]  # armed
+    device_id = _make_bn_low_sensor(hass, unique="recovered", state="off")
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {"device_id": device_id, "device_name": "x", "battery_low": True},
+    )
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]  # armed
 
     await entry.runtime_data._reconcile()
     await hass.async_block_till_done()
 
-    assert hk.get_task_by_source(DOMAIN, device_id=DEVICE)["next_due"]  # still armed
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]  # still armed
+
+
+async def test_reconcile_clears_on_affirmative_recovery(hass: HomeAssistant) -> None:
+    # A device whose low sensor reads "off" (reporting, not low) clears the armed task.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+    device_id = _make_bn_low_sensor(hass, unique="backok", state="off")
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {"device_id": device_id, "device_name": "x", "battery_low": True},
+    )
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]  # armed
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"] is None  # cleared
+
+
+async def test_reconcile_keeps_armed_task_for_silent_device(hass: HomeAssistant) -> None:
+    # A device that's gone dark (low sensor "unknown", neither low nor recovered) must
+    # keep its armed task — clearing it would record a phantom replacement.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+    device_id = _make_bn_low_sensor(hass, unique="dead", state="unknown")
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {"device_id": device_id, "device_name": "x", "battery_low": True},
+    )
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]  # armed
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]  # still armed
 
 
 async def test_reconcile_reads_battery_attributes_into_notes(hass: HomeAssistant) -> None:
@@ -217,6 +281,79 @@ async def test_reconcile_reads_battery_attributes_into_notes(hass: HomeAssistant
     task = hk.get_task_by_source(DOMAIN, device_id=device.id)
     assert task is not None and task["next_due"]  # created + armed
     assert "CR2032" in task["notes"]
+
+
+async def test_not_reported_arms_task_when_enabled(hass: HomeAssistant) -> None:
+    # A battery that's stopped reporting (suspected dead) arms a task when opted in,
+    # with notes that explain why rather than looking like a normal low battery.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_TREAT_NOT_REPORTED: True}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    hass.bus.async_fire(
+        BN_EVENT_NOT_REPORTED,
+        {"device_id": DEVICE, "device_name": "Attic sensor", "battery_last_reported_days": 9},
+    )
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task is not None and task["next_due"]  # armed
+    assert "not reporting for 9 days" in task["notes"]
+
+
+async def test_not_reported_ignored_when_disabled(hass: HomeAssistant) -> None:
+    # Default (opt-in off): a not-reported event must not create any task.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    hass.bus.async_fire(
+        BN_EVENT_NOT_REPORTED,
+        {"device_id": DEVICE, "device_name": "Attic sensor", "battery_last_reported_days": 9},
+    )
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=DEVICE) is None
+
+
+async def test_startup_drives_check_last_reported_when_enabled(hass: HomeAssistant) -> None:
+    # When opted in, the glue asks Battery Notes to check for stale batteries on
+    # startup, passing the configured day threshold.
+    await async_setup_fake_home_keeper(hass)
+    calls: list[dict] = []
+
+    async def _handler(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register(BN_DOMAIN, BN_SERVICE_CHECK_LAST_REPORTED, _handler)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={},
+        options={OPT_TREAT_NOT_REPORTED: True, OPT_NOT_REPORTED_DAYS: 5},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert calls and calls[0][BN_FIELD_DAYS_LAST_REPORTED] == 5
+
+
+async def test_startup_does_not_check_when_disabled(hass: HomeAssistant) -> None:
+    # Default off: the glue must not call Battery Notes' check action.
+    await async_setup_fake_home_keeper(hass)
+    calls: list[dict] = []
+
+    async def _handler(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register(BN_DOMAIN, BN_SERVICE_CHECK_LAST_REPORTED, _handler)
+    await _setup_glue(hass)
+
+    assert calls == []
 
 
 async def test_remove_entry_deletes_only_our_tasks(hass: HomeAssistant) -> None:

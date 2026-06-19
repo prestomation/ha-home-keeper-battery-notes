@@ -64,6 +64,28 @@ duplicate tasks.
   Notes (default on).
 - **Clear on recovery** — clear the task if a battery's level recovers on its own
   (default on).
+- **Flag batteries that stop reporting** — also create a task for a battery that's
+  gone silent (default **off**; see below).
+- **Days with no report before flagging** — the staleness threshold for the option
+  above (default `3`).
+
+## Dead / non-reporting batteries
+
+A battery that's gone *low* tells you so: it reports a low level and Battery Notes
+fires a low signal. But a battery that's actually **dead** usually just stops
+reporting — its level goes `unknown`/`unavailable` — so it never crosses the low
+threshold and, by default, never becomes a task. That's the gap where dead batteries
+hide.
+
+Turn on **Flag batteries that stop reporting** and the glue periodically asks Battery
+Notes which batteries haven't reported in **N days** (via Battery Notes'
+`check_battery_last_reported`), then raises the same *"Replace battery: …"* task for
+each — its notes read *"not reporting for N days"* so you know why it's there. The day
+threshold doubles as a debounce, so a brief dropout (a restart, a flaky radio) doesn't
+spawn a spurious task. It's **off by default** because a silent device isn't always a
+dead battery; opt in when you want the coverage. The task clears the usual ways:
+replace the battery (from either side), or the battery starts reporting a healthy
+level again.
 
 ## Development & tests
 

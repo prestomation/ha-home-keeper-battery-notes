@@ -26,7 +26,14 @@ ORIGIN = DOMAIN
 BN_DOMAIN = "battery_notes"
 BN_EVENT_THRESHOLD = "battery_notes_battery_threshold"
 BN_EVENT_REPLACED = "battery_notes_battery_replaced"
+# A dead battery usually stops reporting (its level goes unknown/unavailable), so it
+# never crosses the *low* threshold — no THRESHOLD event fires and the battery-low
+# binary sensor never reads "on". Battery Notes surfaces this instead as "not
+# reported", but only when the check_battery_last_reported action is called (it's not
+# a continuous sensor); so the glue drives that action and listens for this event.
+BN_EVENT_NOT_REPORTED = "battery_notes_battery_not_reported"
 BN_SERVICE_SET_REPLACED = "set_battery_replaced"
+BN_SERVICE_CHECK_LAST_REPORTED = "check_battery_last_reported"
 # Battery-low binary_sensor device class, used to find Battery Notes' low sensors in
 # the entity registry during reconciliation (robust to entity_id renames/i18n).
 BN_BATTERY_LOW_DEVICE_CLASS = "battery"
@@ -38,15 +45,28 @@ FIELD_BATTERY_LOW = "battery_low"
 FIELD_BATTERY_LEVEL = "battery_level"
 FIELD_BATTERY_TYPE = "battery_type"
 FIELD_BATTERY_QUANTITY = "battery_quantity"
+# Carried on the not-reported event: how many days since the battery last reported.
+FIELD_LAST_REPORTED_DAYS = "battery_last_reported_days"
+
+# check_battery_last_reported action parameters.
+BN_FIELD_DAYS_LAST_REPORTED = "days_last_reported"
+BN_FIELD_RAISE_EVENTS = "raise_events"
 
 # ── Options (config_flow) ────────────────────────────────────────────────────
 OPT_NAME_TEMPLATE = "name_template"
 OPT_TWO_WAY = "two_way"
 OPT_CLEAR_ON_RECOVERY = "clear_on_recovery"
+OPT_TREAT_NOT_REPORTED = "treat_not_reported"
+OPT_NOT_REPORTED_DAYS = "not_reported_days"
 
 DEFAULT_NAME_TEMPLATE = "Replace battery: {device_name}"
 DEFAULT_TWO_WAY = True
 DEFAULT_CLEAR_ON_RECOVERY = True
+# Opt-in: a dead/non-reporting battery is ambiguous (could be an offline device), so
+# leave it off by default. The day threshold is also the debounce that filters
+# transient unknown/unavailable blips (e.g. a restart or a brief network dropout).
+DEFAULT_TREAT_NOT_REPORTED = False
+DEFAULT_NOT_REPORTED_DAYS = 3
 
 # Display metadata for the "Managed by" chip Home Keeper renders on our tasks.
 MANAGED_DISPLAY_NAME = "Battery Notes"

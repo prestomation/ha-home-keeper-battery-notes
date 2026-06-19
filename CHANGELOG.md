@@ -6,6 +6,26 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
 
 ## [Unreleased]
 
+## [0.1.0b2] - 2026-06-19
+
+### Added
+
+- **Flag batteries that stop reporting (suspected dead).** A dead battery usually goes
+  silent (`unknown`/`unavailable`) rather than crossing the *low* threshold, so it
+  never became a task. New opt-in option drives Battery Notes'
+  `check_battery_last_reported` on a daily cadence (and at startup) and raises a
+  *"Replace battery: …"* task — noted *"not reporting for N days"* — for any battery
+  stale beyond a configurable day threshold. Off by default; the threshold also
+  debounces transient dropouts. New options: **Flag batteries that stop reporting**
+  and **Days with no report before flagging**.
+
+### Fixed
+
+- Startup reconcile no longer clears an armed task when its device has gone silent
+  (`unknown`/`unavailable`). Clearing is now **affirmative** — only a battery actually
+  reporting a not-low level again (low sensor `off`) clears the task — so a battery
+  that goes from low to dead keeps its task instead of recording a phantom replacement.
+
 ## [0.1.0b1] - 2026-06-16
 
 First beta. Bridges [Battery Notes](https://github.com/andrew-codechimp/HA-Battery-Notes)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -17,16 +18,23 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers.event import async_track_time_interval
 
 from . import logic
 from .const import (
     BN_BATTERY_LOW_DEVICE_CLASS,
     BN_DOMAIN,
+    BN_EVENT_NOT_REPORTED,
     BN_EVENT_REPLACED,
     BN_EVENT_THRESHOLD,
+    BN_FIELD_DAYS_LAST_REPORTED,
+    BN_FIELD_RAISE_EVENTS,
+    BN_SERVICE_CHECK_LAST_REPORTED,
     BN_SERVICE_SET_REPLACED,
     DEFAULT_CLEAR_ON_RECOVERY,
     DEFAULT_NAME_TEMPLATE,
+    DEFAULT_NOT_REPORTED_DAYS,
+    DEFAULT_TREAT_NOT_REPORTED,
     DEFAULT_TWO_WAY,
     FIELD_BATTERY_LEVEL,
     FIELD_BATTERY_LOW,
@@ -34,14 +42,23 @@ from .const import (
     FIELD_BATTERY_TYPE,
     FIELD_DEVICE_ID,
     FIELD_DEVICE_NAME,
+    FIELD_LAST_REPORTED_DAYS,
     HK_DOMAIN,
     HK_EVENT_TASK_COMPLETED,
     OPT_CLEAR_ON_RECOVERY,
     OPT_NAME_TEMPLATE,
+    OPT_NOT_REPORTED_DAYS,
+    OPT_TREAT_NOT_REPORTED,
     OPT_TWO_WAY,
     ORIGIN,
     SOURCE_NS,
 )
+
+# How often the glue asks Battery Notes to re-check which batteries have stopped
+# reporting. Battery Notes only computes "not reported" on demand (no continuous
+# sensor), so we drive its check action on this cadence; a dead battery is days-scale
+# news, so daily is plenty and cheap.
+_NOT_REPORTED_SCAN_INTERVAL = timedelta(days=1)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,6 +88,18 @@ class BatteryNotesGlue:
     def _clear_on_recovery(self) -> bool:
         return self.entry.options.get(OPT_CLEAR_ON_RECOVERY, DEFAULT_CLEAR_ON_RECOVERY)
 
+    @property
+    def _treat_not_reported(self) -> bool:
+        return self.entry.options.get(
+            OPT_TREAT_NOT_REPORTED, DEFAULT_TREAT_NOT_REPORTED
+        )
+
+    @property
+    def _not_reported_days(self) -> int:
+        return int(
+            self.entry.options.get(OPT_NOT_REPORTED_DAYS, DEFAULT_NOT_REPORTED_DAYS)
+        )
+
     # ── lifecycle ────────────────────────────────────────────────────────────
     async def async_setup(self) -> None:
         """Subscribe to events and schedule the startup reconcile."""
@@ -82,14 +111,31 @@ class BatteryNotesGlue:
             bus.async_listen(BN_EVENT_REPLACED, self._on_replaced)
         )
         self.entry.async_on_unload(
+            bus.async_listen(BN_EVENT_NOT_REPORTED, self._on_not_reported)
+        )
+        self.entry.async_on_unload(
             bus.async_listen(HK_EVENT_TASK_COMPLETED, self._on_hk_completed)
         )
+
+        # Poll Battery Notes for batteries that have stopped reporting (opt-in). The
+        # timer fires the check on a cadence; the resulting events flow to
+        # _on_not_reported. Only armed when the option is on (setup re-runs on an
+        # options change), so a disabled glue schedules nothing.
+        if self._treat_not_reported:
+            self.entry.async_on_unload(
+                async_track_time_interval(
+                    self.hass,
+                    self._check_not_reported,
+                    _NOT_REPORTED_SCAN_INTERVAL,
+                )
+            )
 
         # Reconcile once everything is up. after_dependencies only orders setup; it
         # doesn't guarantee Battery Notes' entities or Home Keeper's services exist
         # yet, so wait for HA-started (or run now if we're already past start-up).
         if self.hass.is_running:
             await self._reconcile()
+            await self._check_not_reported()
         else:
             self.entry.async_on_unload(
                 self.hass.bus.async_listen_once(
@@ -99,6 +145,7 @@ class BatteryNotesGlue:
 
     async def _on_started(self, _event: Event) -> None:
         await self._reconcile()
+        await self._check_not_reported()
 
     # ── Home Keeper helpers ──────────────────────────────────────────────────
     def _hk_ready(self, service: str) -> bool:
@@ -171,6 +218,61 @@ class BatteryNotesGlue:
             if action is not None:
                 await self._execute(action)
 
+    async def _on_not_reported(self, event: Event) -> None:
+        """A battery hasn't reported in a while → treat as suspected-dead, arm a task.
+
+        Same create-or-arm decision as a low battery (keyed on the device), so a
+        battery that was already low and then went dark just stays armed rather than
+        spawning a second task. Guarded by the opt-in option.
+        """
+        if not self._treat_not_reported:
+            return
+        device_id = event.data.get(FIELD_DEVICE_ID)
+        if not device_id:
+            return
+        async with self._lock:
+            tasks = await self._list_tasks()
+            action = logic.plan_battery_low(
+                tasks,
+                device_id=device_id,
+                device_name=event.data.get(FIELD_DEVICE_NAME) or device_id,
+                config_entry_id=self.entry.entry_id,
+                name_template=self._name_template,
+                battery_type=event.data.get(FIELD_BATTERY_TYPE),
+                battery_quantity=event.data.get(FIELD_BATTERY_QUANTITY),
+                reason="not_reported",
+                last_reported_days=event.data.get(FIELD_LAST_REPORTED_DAYS),
+            )
+            if action is not None:
+                await self._execute(action)
+
+    async def _check_not_reported(self, _now: Any = None) -> None:
+        """Ask Battery Notes which batteries have stopped reporting.
+
+        Battery Notes computes "not reported" only on demand (no continuous sensor),
+        raising a ``battery_notes_battery_not_reported`` event per matching device,
+        which _on_not_reported turns into a task. A no-op unless the option is on and
+        Battery Notes exposes the action.
+        """
+        if not self._treat_not_reported:
+            return
+        if not self.hass.services.has_service(
+            BN_DOMAIN, BN_SERVICE_CHECK_LAST_REPORTED
+        ):
+            return
+        try:
+            await self.hass.services.async_call(
+                BN_DOMAIN,
+                BN_SERVICE_CHECK_LAST_REPORTED,
+                {
+                    BN_FIELD_DAYS_LAST_REPORTED: self._not_reported_days,
+                    BN_FIELD_RAISE_EVENTS: True,
+                },
+                blocking=True,
+            )
+        except HomeAssistantError as err:
+            _LOGGER.debug("check_battery_last_reported failed: %s", err)
+
     async def _on_hk_completed(self, event: Event) -> None:
         """Two-way sync: mirror a Home-Keeper-side completion to Battery Notes.
 
@@ -217,11 +319,12 @@ class BatteryNotesGlue:
         if not self._hk_ready("list_tasks"):
             return
         async with self._lock:
-            low_devices = self._current_low_devices()
+            low_devices, recovered_devices = self._scan_battery_sensors()
             tasks = await self._list_tasks()
             actions = logic.plan_reconcile(
                 tasks,
                 low_devices,
+                recovered_devices,
                 config_entry_id=self.entry.entry_id,
                 name_template=self._name_template,
             )
@@ -234,11 +337,22 @@ class BatteryNotesGlue:
             if actions:
                 _LOGGER.debug("Reconcile applied %d action(s)", len(actions))
 
-    def _current_low_devices(self) -> dict[str, dict[str, Any]]:
-        """Battery Notes devices currently reporting low, keyed by device_id."""
+    def _scan_battery_sensors(
+        self,
+    ) -> tuple[dict[str, dict[str, Any]], set[str]]:
+        """Snapshot Battery Notes' battery-low sensors for a reconcile.
+
+        Returns ``(low, recovered)``: *low* maps ``device_id`` → battery info for
+        sensors reading ``on`` (arm/create), and *recovered* is the set of devices
+        whose sensor reads ``off`` — an affirmative "reporting and not low" signal we
+        clear on. A sensor that's ``unknown``/``unavailable`` (or absent) lands in
+        neither: that's the suspected-dead case, so we neither arm from it here (the
+        not-reported path, with its day threshold, handles that) nor clear on it.
+        """
         ent_reg = er.async_get(self.hass)
         dev_reg = dr.async_get(self.hass)
         low: dict[str, dict[str, Any]] = {}
+        recovered: set[str] = set()
         for entity in ent_reg.entities.values():
             if entity.platform != BN_DOMAIN or entity.domain != "binary_sensor":
                 continue
@@ -247,7 +361,12 @@ class BatteryNotesGlue:
             if not entity.device_id:
                 continue
             state = self.hass.states.get(entity.entity_id)
-            if state is None or state.state != "on":
+            if state is None:
+                continue
+            if state.state == "off":
+                recovered.add(entity.device_id)
+                continue
+            if state.state != "on":
                 continue
             device = dev_reg.async_get(entity.device_id)
             name = (device.name_by_user or device.name) if device else None
@@ -261,4 +380,4 @@ class BatteryNotesGlue:
                 "battery_quantity": attrs.get(FIELD_BATTERY_QUANTITY),
                 "battery_level": attrs.get(FIELD_BATTERY_LEVEL),
             }
-        return low
+        return low, recovered
