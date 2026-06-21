@@ -10,7 +10,7 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
 - **Announces itself to Home Keeper's companion discovery.** When set up, the glue
   registers with Home Keeper (via its `register_companion` service) so it appears as a
   **connected** companion under Home Keeper's **Settings → Companions** section, with a
-  *Configure* button that deep-links to this glue's own options. Home Keeper also
+  *Configure* button that opens this glue's own settings page. Home Keeper also
   *suggests* installing this glue to anyone who has Battery Notes but not the bridge.
   Best-effort and re-announced on Home Keeper reload; a no-op on older Home Keeper
   versions without companion discovery.

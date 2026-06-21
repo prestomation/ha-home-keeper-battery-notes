@@ -50,7 +50,7 @@ start — so it self-heals across restarts and never creates duplicate tasks.
 
 The glue also **registers itself with Home Keeper's companion discovery**, so it shows up
 as a *connected* companion under Home Keeper's **Settings → Companions** (with a
-*Configure* link back to this integration's options). Home Keeper will likewise *suggest*
+*Configure* link to this integration's settings page). Home Keeper will likewise *suggest*
 this bridge to anyone who has Battery Notes installed but hasn't added it yet.
 
 ## Install
