@@ -13,6 +13,11 @@ DOMAIN = "home_keeper_battery_notes"
 # ── Home Keeper side ─────────────────────────────────────────────────────────
 HK_DOMAIN = "home_keeper"
 HK_EVENT_TASK_COMPLETED = "home_keeper_task_completed"
+# Home Keeper fires this (at its setup and on reload) to ask companion integrations
+# to (re-)announce themselves to its discovery registry. We both register at our own
+# setup and respond to this ping, so discovery works regardless of startup order.
+HK_EVENT_REGISTER_COMPANIONS = "home_keeper_register_companions"
+HK_SERVICE_REGISTER_COMPANION = "register_companion"
 # Namespace for the opaque ``source`` dict we attach to tasks we create, so we can
 # recognise our own tasks later (``source[SOURCE_NS] == {"device_id": ...}``).
 SOURCE_NS = DOMAIN

@@ -37,6 +37,7 @@ from .const import (
     DEFAULT_SKIP_RECHARGEABLE,
     DEFAULT_TREAT_NOT_REPORTED,
     DEFAULT_TWO_WAY,
+    DOMAIN,
     FIELD_BATTERY_LEVEL,
     FIELD_BATTERY_LOW,
     FIELD_BATTERY_QUANTITY,
@@ -45,7 +46,9 @@ from .const import (
     FIELD_DEVICE_NAME,
     FIELD_LAST_REPORTED_DAYS,
     HK_DOMAIN,
+    HK_EVENT_REGISTER_COMPANIONS,
     HK_EVENT_TASK_COMPLETED,
+    HK_SERVICE_REGISTER_COMPANION,
     OPT_CLEAR_ON_RECOVERY,
     OPT_NAME_TEMPLATE,
     OPT_NOT_REPORTED_DAYS,
@@ -124,6 +127,14 @@ class BatteryNotesGlue:
         self.entry.async_on_unload(
             bus.async_listen(HK_EVENT_TASK_COMPLETED, self._on_hk_completed)
         )
+        # Announce this glue to Home Keeper's companion discovery so it shows up under
+        # Home Keeper's Settings → Companions as a connected pairing (with a Configure
+        # link back to our options). Register now, and again whenever Home Keeper asks
+        # companions to re-announce (covers Home Keeper starting after us).
+        self.entry.async_on_unload(
+            bus.async_listen(HK_EVENT_REGISTER_COMPANIONS, self._on_register_request)
+        )
+        await self._register_companion()
 
         # Poll Battery Notes for batteries that have stopped reporting (opt-in). The
         # timer fires the check on a cadence; the resulting events flow to
@@ -154,6 +165,36 @@ class BatteryNotesGlue:
     async def _on_started(self, _event: Event) -> None:
         await self._reconcile()
         await self._check_not_reported()
+
+    async def _on_register_request(self, _event: Event) -> None:
+        await self._register_companion()
+
+    async def _register_companion(self) -> None:
+        """Announce this glue to Home Keeper's companion registry (best-effort)."""
+        if not self._hk_ready(HK_SERVICE_REGISTER_COMPANION):
+            return
+        try:
+            await self.hass.services.async_call(
+                HK_DOMAIN,
+                HK_SERVICE_REGISTER_COMPANION,
+                {
+                    "domain": DOMAIN,
+                    "name": "Battery Notes",
+                    "icon": "mdi:battery-alert-variant-outline",
+                    "description": (
+                        "Turns Battery Notes low-battery alerts into Home Keeper "
+                        "“replace battery” tasks, kept in sync both ways."
+                    ),
+                    "config_entry_id": self.entry.entry_id,
+                    "docs_url": (
+                        "https://github.com/prestomation/ha-home-keeper-battery-notes"
+                    ),
+                    "capabilities": ["battery_replacement"],
+                },
+                blocking=False,
+            )
+        except Exception:  # noqa: BLE001 — discovery is best-effort; never break setup
+            _LOGGER.debug("Home Keeper companion registration failed", exc_info=True)
 
     # ── Home Keeper helpers ──────────────────────────────────────────────────
     def _hk_ready(self, service: str) -> bool:
