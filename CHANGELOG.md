@@ -6,6 +6,8 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
 
 ## [Unreleased]
 
+## [0.1.0b3] - 2026-06-21
+
 ### Added
 
 - **Skip rechargeable batteries (on by default).** A rechargeable device (phone, watch,
