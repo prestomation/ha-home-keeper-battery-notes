@@ -4,5 +4,6 @@ pytest-homeassistant-custom-component
 
 # Home Keeper provides the test fake (home_keeper.testing) the integration-fake
 # tests run against, and the real integration the docker tier installs. The
-# triggered task type this glue needs is on main as of ha-home-keeper#21.
-home-keeper @ git+https://github.com/prestomation/ha-home-keeper@main
+# triggered task type this glue needs shipped in Home Keeper's first stable, 0.3.0
+# (ha-home-keeper#21), so the stable glue pins the stable tag rather than main.
+home-keeper @ git+https://github.com/prestomation/ha-home-keeper@v0.3.0
