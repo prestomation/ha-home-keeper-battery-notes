@@ -1,5 +1,15 @@
 # Home Keeper — Battery Notes
 
+[![GitHub Downloads][downloads-shield]][releases]
+[![GitHub Release][release-shield]][releases]
+[![GitHub Release Date][release-date-shield]][releases]
+[![GitHub Activity][commits-shield]][commits]
+[![License][license-shield]](LICENSE)
+[![hacs][hacs-shield]][hacs]
+![Project Maintenance][maintenance-shield]
+[![HACS Validation][hacs-validation-shield]][hacs-validation]
+[![HA Version][ha-version-shield]][ha-version]
+
 A small glue integration that turns [Battery Notes](https://github.com/andrew-codechimp/HA-Battery-Notes)
 signals into [Home Keeper](https://github.com/prestomation/ha-home-keeper) tasks — so
 *"replace this battery"* shows up in your to-do list, on the device page, and in the
@@ -97,3 +107,22 @@ The full design — why a persistent armed/dormant task (rather than create/dele
 and how it preserves history — lives in Home Keeper's
 [`docs/BATTERY_NOTES_PLAN.md`](https://github.com/prestomation/ha-home-keeper/blob/main/docs/BATTERY_NOTES_PLAN.md)
 and the contract in [`docs/INTEGRATING.md`](https://github.com/prestomation/ha-home-keeper/blob/main/docs/INTEGRATING.md) §7.
+
+<!--
+Badge reference links.
+-->
+
+[downloads-shield]: https://img.shields.io/github/downloads/prestomation/ha-home-keeper-battery-notes/total.svg?style=for-the-badge
+[releases]: https://github.com/prestomation/ha-home-keeper-battery-notes/releases
+[release-shield]: https://img.shields.io/github/release/prestomation/ha-home-keeper-battery-notes.svg?style=for-the-badge
+[release-date-shield]: https://img.shields.io/github/release-date/prestomation/ha-home-keeper-battery-notes?style=for-the-badge
+[commits-shield]: https://img.shields.io/github/last-commit/prestomation/ha-home-keeper-battery-notes?style=for-the-badge
+[commits]: https://github.com/prestomation/ha-home-keeper-battery-notes/commits/main
+[license-shield]: https://img.shields.io/github/license/prestomation/ha-home-keeper-battery-notes.svg?style=for-the-badge
+[hacs-shield]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge
+[hacs]: https://github.com/hacs/integration
+[maintenance-shield]: https://img.shields.io/badge/maintainer-%40prestomation-blue.svg?style=for-the-badge
+[hacs-validation-shield]: https://github.com/prestomation/ha-home-keeper-battery-notes/actions/workflows/hacs.yml/badge.svg
+[hacs-validation]: https://github.com/prestomation/ha-home-keeper-battery-notes/actions/workflows/hacs.yml
+[ha-version-shield]: https://img.shields.io/badge/Home%20Assistant-2024.1%2B-blue.svg?style=for-the-badge
+[ha-version]: https://www.home-assistant.io/
