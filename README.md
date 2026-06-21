@@ -64,10 +64,28 @@ duplicate tasks.
   Notes (default on).
 - **Clear on recovery** — clear the task if a battery's level recovers on its own
   (default on).
+- **Skip rechargeable batteries** — don't raise replace-battery tasks for rechargeable
+  devices (default **on**; see below).
 - **Flag batteries that stop reporting** — also create a task for a battery that's
   gone silent (default **off**; see below).
 - **Days with no report before flagging** — the staleness threshold for the option
   above (default `3`).
+
+## Rechargeable batteries
+
+A phone, watch, or tablet hitting a low charge means *plug it in* — not *replace the
+battery*. The whole "low → replace" model comes from **disposable** cells, where a low
+reading is end-of-life. A rechargeable cycles low→full constantly, so a replace-battery
+task for one would churn forever: re-armed on every drain, cleared on every charge,
+piling up phantom "replacements" in its history for a part you'll essentially never
+swap. And the only thing that *would* justify replacing it — capacity degradation — is
+something Battery Notes can't see; it only knows the instantaneous charge level.
+
+So **Skip rechargeable batteries** is **on by default**: when Battery Notes reports a
+rechargeable battery (its battery type is *Rechargeable*) going low or non-reporting,
+the glue raises no task, and a reconcile retires any existing rechargeable task (e.g.
+one created before you upgraded) — even if the device has since charged back up. Turn
+it off if you deliberately track rechargeable replacements by hand.
 
 ## Dead / non-reporting batteries
 

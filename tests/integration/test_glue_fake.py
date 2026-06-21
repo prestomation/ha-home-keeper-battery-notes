@@ -26,6 +26,7 @@ from custom_components.home_keeper_battery_notes.const import (
     HK_DOMAIN,
     OPT_CLEAR_ON_RECOVERY,
     OPT_NOT_REPORTED_DAYS,
+    OPT_SKIP_RECHARGEABLE,
     OPT_TREAT_NOT_REPORTED,
 )
 
@@ -281,6 +282,90 @@ async def test_reconcile_reads_battery_attributes_into_notes(hass: HomeAssistant
     task = hk.get_task_by_source(DOMAIN, device_id=device.id)
     assert task is not None and task["next_due"]  # created + armed
     assert "CR2032" in task["notes"]
+
+
+async def test_rechargeable_low_creates_no_task(hass: HomeAssistant) -> None:
+    # Default (skip on): a rechargeable going low means "charge it", not "replace it",
+    # so no replace-battery task is created.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {
+            "device_id": DEVICE,
+            "device_name": "Fold7",
+            "battery_low": True,
+            "battery_type": "Rechargeable",
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=DEVICE) is None
+
+
+async def test_rechargeable_low_creates_task_when_skip_disabled(
+    hass: HomeAssistant,
+) -> None:
+    # Opt-out: a user who tracks rechargeable replacements by hand still gets a task.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_SKIP_RECHARGEABLE: False}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {
+            "device_id": DEVICE,
+            "device_name": "Fold7",
+            "battery_low": True,
+            "battery_type": "Rechargeable",
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=DEVICE) is not None
+
+
+async def test_reconcile_removes_existing_rechargeable_task(hass: HomeAssistant) -> None:
+    # An upgrade (or enabling the option) retires a stale replace-battery task for a
+    # rechargeable device — even one that has since recovered (sensor "off"), which the
+    # recovery path alone would only mark dormant, not remove.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)  # default: skip_rechargeable on
+
+    bn_entry = MockConfigEntry(domain=BN_DOMAIN, data={})
+    bn_entry.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=bn_entry.entry_id,
+        identifiers={(BN_DOMAIN, "fold7")},
+        name="Fold7",
+    )
+    ent = er.async_get(hass).async_get_or_create(
+        "binary_sensor", BN_DOMAIN, "fold7_low",
+        device_id=device.id, original_device_class="battery",
+    )
+    # Recovered (sensor "off") but still carrying the rechargeable battery type.
+    hass.states.async_set(
+        ent.entity_id, "off", {"battery_type": "Rechargeable", "battery_quantity": 1}
+    )
+    hk.tasks["t_fold7"] = {
+        "id": "t_fold7",
+        "name": "Replace battery: Fold7",
+        "recurrence_type": "triggered",
+        "next_due": None,
+        "device_id": device.id,
+        "source": {DOMAIN: {"device_id": device.id}},
+        "completions": [],
+    }
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=device.id) is None
 
 
 async def test_not_reported_arms_task_when_enabled(hass: HomeAssistant) -> None:

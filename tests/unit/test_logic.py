@@ -70,6 +70,78 @@ def test_low_with_already_armed_task_is_noop():
     assert action is None
 
 
+# ── rechargeable batteries ───────────────────────────────────────────────────
+def test_is_rechargeable_matches_label_case_insensitively():
+    assert L.is_rechargeable("Rechargeable") is True
+    assert L.is_rechargeable("rechargeable") is True
+    assert L.is_rechargeable("  Li-ion (Rechargeable)  ") is True
+    assert L.is_rechargeable("AAA") is False
+    assert L.is_rechargeable("CR2032") is False
+    assert L.is_rechargeable(None) is False
+    assert L.is_rechargeable(42) is False
+
+
+def test_low_rechargeable_skipped_creates_no_task():
+    # A low charge on a rechargeable means "charge it", not "replace it": no task.
+    action = L.plan_battery_low(
+        [],
+        device_id="phone",
+        device_name="Fold7",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        battery_type="Rechargeable",
+        battery_quantity=1,
+        battery_level=9,
+        skip_rechargeable=True,
+    )
+    assert action is None
+
+
+def test_low_rechargeable_deletes_existing_task():
+    # An upgrade retires a stale replace-battery task created before the option.
+    tasks = [_task("phone", next_due=None)]
+    action = L.plan_battery_low(
+        tasks,
+        device_id="phone",
+        device_name="Fold7",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        battery_type="Rechargeable",
+        skip_rechargeable=True,
+    )
+    assert action == L.DeleteTask("task_phone", "phone")
+
+
+def test_low_rechargeable_still_created_when_option_off():
+    # Opt-out: a user who tracks rechargeable replacements by hand still gets a task.
+    action = L.plan_battery_low(
+        [],
+        device_id="phone",
+        device_name="Fold7",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        battery_type="Rechargeable",
+        skip_rechargeable=False,
+    )
+    assert isinstance(action, L.CreateTask)
+
+
+def test_not_reported_rechargeable_is_skipped_too():
+    # The suspected-dead path honours the same skip (a rechargeable can't be "dead").
+    action = L.plan_battery_low(
+        [],
+        device_id="phone",
+        device_name="Fold7",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        battery_type="Rechargeable",
+        reason="not_reported",
+        last_reported_days=12,
+        skip_rechargeable=True,
+    )
+    assert action is None
+
+
 # ── battery cleared ──────────────────────────────────────────────────────────
 def test_clear_armed_task_returns_clear_action():
     tasks = [_task("dev1", next_due="2026-06-01T00:00:00-04:00")]
@@ -163,6 +235,40 @@ def test_reconcile_does_not_clear_armed_task_for_silent_device():
         tasks, {}, set(), config_entry_id=CFG, name_template=TMPL
     )
     assert actions == []
+
+
+def test_reconcile_deletes_rechargeable_task_regardless_of_state():
+    # A rechargeable device's task must be retired even when it isn't currently low
+    # (recovered/silent → absent from low_devices), which the low/recovered passes
+    # alone would miss. Only the rechargeable pass catches it.
+    tasks = [
+        _task("phone_recovered", next_due=None),                       # dormant, recovered
+        _task("phone_low", next_due="2026-06-01T00:00:00-04:00"),      # still armed + low
+        _task("aaa_low", next_due="2026-06-01T00:00:00-04:00"),        # disposable, untouched
+    ]
+    low = {
+        "phone_low": {"name": "Fold7", "battery_type": "Rechargeable"},
+        "aaa_low": {"name": "Remote", "battery_type": "AAA"},
+    }
+    actions = L.plan_reconcile(
+        tasks,
+        low,
+        set(),
+        config_entry_id=CFG,
+        name_template=TMPL,
+        skip_rechargeable=True,
+        rechargeable_devices=frozenset({"phone_recovered", "phone_low"}),
+    )
+    assert L.DeleteTask("task_phone_recovered", "phone_recovered") in actions
+    assert L.DeleteTask("task_phone_low", "phone_low") in actions
+    # The low rechargeable is deleted exactly once (not also re-armed/duplicated).
+    assert sum(isinstance(a, L.DeleteTask) for a in actions) == 2
+    assert not any(
+        isinstance(a, (L.ArmTask, L.ClearTask)) and a.device_id.startswith("phone")
+        for a in actions
+    )
+    # A disposable battery is unaffected by the rechargeable skip.
+    assert not any(a.device_id == "aaa_low" for a in actions)
 
 
 def test_reconcile_ignores_foreign_tasks():

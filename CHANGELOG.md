@@ -6,6 +6,18 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
 
 ## [Unreleased]
 
+### Added
+
+- **Skip rechargeable batteries (on by default).** A rechargeable device (phone, watch,
+  tablet, …) going low means "charge it", not "replace the battery", so a replace-battery
+  task is the wrong signal — it would churn forever (re-armed on every drain, cleared on
+  every charge) and pile up phantom replacements, while the only thing that would justify
+  a real replacement (capacity degradation) is something Battery Notes can't see. The glue
+  now raises no task for a rechargeable battery going low or non-reporting, and a startup
+  reconcile retires any existing rechargeable task (including one created before the
+  upgrade, even if the device has since recovered). New option **Skip rechargeable
+  batteries**; turn it off to keep tracking rechargeable replacements by hand.
+
 ## [0.1.0b2] - 2026-06-19
 
 ### Added

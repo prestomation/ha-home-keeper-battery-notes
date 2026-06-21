@@ -18,11 +18,13 @@
           "name_template": "Task name template",
           "two_way": "Two-way sync (completing in Home Keeper marks the battery replaced)",
           "clear_on_recovery": "Clear the task when the battery level recovers on its own",
+          "skip_rechargeable": "Skip rechargeable batteries (recommended)",
           "treat_not_reported": "Also flag batteries that stop reporting (often dead)",
           "not_reported_days": "Days with no report before flagging a battery"
         },
         "data_description": {
           "name_template": "Use {device_name} for the battery's device. Default: \"Replace battery: {device_name}\".",
+          "skip_rechargeable": "A rechargeable device (phone, watch, …) going low means \"charge it\", not \"replace the battery\", so a replacement task is the wrong signal and would churn forever. When on, low/not-reported rechargeables get no task and any existing one is removed. Turn off if you track rechargeable replacements by hand.",
           "treat_not_reported": "A dead battery usually stops reporting instead of going low. When on, a battery that hasn't reported for the number of days below gets a replacement task. The day threshold also filters brief dropouts (restarts, network blips).",
           "not_reported_days": "Only applies when the option above is on."
         }

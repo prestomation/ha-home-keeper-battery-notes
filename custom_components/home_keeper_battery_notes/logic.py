@@ -28,6 +28,7 @@ from .const import (
     COMPLETION_PROMPT,
     MANAGED_DISPLAY_NAME,
     MANAGED_ICON,
+    RECHARGEABLE_BATTERY_TYPE,
     SOURCE_NS,
 )
 
@@ -57,7 +58,21 @@ class ClearTask:
     device_id: str
 
 
-Action = CreateTask | ArmTask | ClearTask
+@dataclass(frozen=True)
+class DeleteTask:
+    """Remove a task entirely (call ``home_keeper.delete_task`` with ``force``).
+
+    Used to retire a task that should never have existed — e.g. a rechargeable
+    device's replace-battery task when ``skip_rechargeable`` is on. Unlike
+    :class:`ClearTask` it records no completion (a phantom replacement) and leaves
+    nothing lingering in Home Keeper's "Monitored" list.
+    """
+
+    task_id: str
+    device_id: str
+
+
+Action = CreateTask | ArmTask | ClearTask | DeleteTask
 
 
 # ── helpers over the Home Keeper task list ───────────────────────────────────
@@ -79,6 +94,19 @@ def task_for_device(tasks: list[dict], device_id: str) -> dict | None:
 def is_armed(task: dict) -> bool:
     """A triggered task is armed (due-now) when it has a ``next_due``; dormant otherwise."""
     return bool(task.get("next_due"))
+
+
+def is_rechargeable(battery_type: Any) -> bool:
+    """Whether *battery_type* names a rechargeable battery (Battery Notes' label).
+
+    A rechargeable's low charge means "charge it", not "replace it", so the glue
+    suppresses replace-battery tasks for these when ``skip_rechargeable`` is on.
+    Matched case-insensitively as a substring to tolerate library variants.
+    """
+    return (
+        isinstance(battery_type, str)
+        and RECHARGEABLE_BATTERY_TYPE in battery_type.strip().lower()
+    )
 
 
 def our_tasks(tasks: list[dict]) -> list[dict]:
@@ -185,6 +213,7 @@ def plan_battery_low(
     battery_level: Any = None,
     reason: str = "low",
     last_reported_days: Any = None,
+    skip_rechargeable: bool = False,
 ) -> Action | None:
     """Decide what to do when *device_id* needs a battery replaced.
 
@@ -193,8 +222,14 @@ def plan_battery_low(
     create-or-arm decision keyed on the device, so a battery that's low and then goes
     dark never produces a second task. Absent → create (born armed). Dormant → arm.
     Already armed → nothing.
+
+    When ``skip_rechargeable`` is on and this is a rechargeable battery, no task is
+    created or armed (a low charge means "charge it"); any task that already exists
+    for the device is *deleted* so an upgrade retires the stale replace-battery task.
     """
     task = task_for_device(tasks, device_id)
+    if skip_rechargeable and is_rechargeable(battery_type):
+        return DeleteTask(task["id"], device_id) if task is not None else None
     if task is None:
         return CreateTask(
             device_id,
@@ -233,6 +268,8 @@ def plan_reconcile(
     *,
     config_entry_id: str,
     name_template: str,
+    skip_rechargeable: bool = False,
+    rechargeable_devices: frozenset[str] = frozenset(),
 ) -> list[Action]:
     """Converge the full state at startup (catch up on signals missed while down).
 
@@ -245,9 +282,28 @@ def plan_reconcile(
     is *not* treated as recovered: that's exactly the suspected-dead case, and
     clearing it would record a phantom replacement (and fight the not-reported path).
     Idempotent no-ops are dropped.
+
+    When ``skip_rechargeable`` is on, *rechargeable_devices* (device ids whose battery
+    is rechargeable, regardless of current low state) have any existing task *deleted*
+    and are never (re)armed — this is what retires a stale rechargeable task whose
+    device has since recovered or gone silent, not just one that's currently low.
     """
     actions: list[Action] = []
+
+    # Retire tasks for rechargeable devices first (covers recovered/silent ones the
+    # low/recovered passes below would otherwise miss). Track them so the later passes
+    # don't also act on the same device.
+    handled: set[str] = set()
+    if skip_rechargeable:
+        for task in our_tasks(tasks):
+            device_id = (task["source"][SOURCE_NS]).get("device_id")
+            if device_id in rechargeable_devices:
+                actions.append(DeleteTask(task["id"], device_id))
+                handled.add(device_id)
+
     for device_id, info in low_devices.items():
+        if device_id in handled:
+            continue
         action = plan_battery_low(
             tasks,
             device_id=device_id,
@@ -257,12 +313,15 @@ def plan_reconcile(
             battery_type=info.get("battery_type"),
             battery_quantity=info.get("battery_quantity"),
             battery_level=info.get("battery_level"),
+            skip_rechargeable=skip_rechargeable,
         )
         if action is not None:
             actions.append(action)
 
     for task in our_tasks(tasks):
         device_id = (task["source"][SOURCE_NS]).get("device_id")
+        if device_id in handled:
+            continue
         if device_id in recovered_devices and is_armed(task):
             actions.append(ClearTask(task["id"], device_id))
     return actions

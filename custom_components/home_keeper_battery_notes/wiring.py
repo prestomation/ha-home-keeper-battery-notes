@@ -34,6 +34,7 @@ from .const import (
     DEFAULT_CLEAR_ON_RECOVERY,
     DEFAULT_NAME_TEMPLATE,
     DEFAULT_NOT_REPORTED_DAYS,
+    DEFAULT_SKIP_RECHARGEABLE,
     DEFAULT_TREAT_NOT_REPORTED,
     DEFAULT_TWO_WAY,
     FIELD_BATTERY_LEVEL,
@@ -48,6 +49,7 @@ from .const import (
     OPT_CLEAR_ON_RECOVERY,
     OPT_NAME_TEMPLATE,
     OPT_NOT_REPORTED_DAYS,
+    OPT_SKIP_RECHARGEABLE,
     OPT_TREAT_NOT_REPORTED,
     OPT_TWO_WAY,
     ORIGIN,
@@ -98,6 +100,12 @@ class BatteryNotesGlue:
     def _not_reported_days(self) -> int:
         return int(
             self.entry.options.get(OPT_NOT_REPORTED_DAYS, DEFAULT_NOT_REPORTED_DAYS)
+        )
+
+    @property
+    def _skip_rechargeable(self) -> bool:
+        return self.entry.options.get(
+            OPT_SKIP_RECHARGEABLE, DEFAULT_SKIP_RECHARGEABLE
         )
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -181,6 +189,17 @@ class BatteryNotesGlue:
                     blocking=True,
                 )
                 _LOGGER.debug("Cleared battery task %s", action.task_id)
+        elif isinstance(action, logic.DeleteTask):
+            if self._hk_ready("delete_task"):
+                # ``force`` because our own tasks are deletion-protected while our
+                # config entry resolves; we're retiring a task that shouldn't exist.
+                await self.hass.services.async_call(
+                    HK_DOMAIN,
+                    "delete_task",
+                    {"task_id": action.task_id, "force": True},
+                    blocking=True,
+                )
+                _LOGGER.debug("Deleted battery task %s", action.task_id)
 
     # ── Battery Notes event handlers ─────────────────────────────────────────
     async def _on_threshold(self, event: Event) -> None:
@@ -200,6 +219,7 @@ class BatteryNotesGlue:
                     battery_type=data.get(FIELD_BATTERY_TYPE),
                     battery_quantity=data.get(FIELD_BATTERY_QUANTITY),
                     battery_level=data.get(FIELD_BATTERY_LEVEL),
+                    skip_rechargeable=self._skip_rechargeable,
                 )
             elif self._clear_on_recovery:
                 action = logic.plan_battery_cleared(tasks, device_id=device_id)
@@ -242,6 +262,7 @@ class BatteryNotesGlue:
                 battery_quantity=event.data.get(FIELD_BATTERY_QUANTITY),
                 reason="not_reported",
                 last_reported_days=event.data.get(FIELD_LAST_REPORTED_DAYS),
+                skip_rechargeable=self._skip_rechargeable,
             )
             if action is not None:
                 await self._execute(action)
@@ -319,7 +340,9 @@ class BatteryNotesGlue:
         if not self._hk_ready("list_tasks"):
             return
         async with self._lock:
-            low_devices, recovered_devices = self._scan_battery_sensors()
+            low_devices, recovered_devices, rechargeable_devices = (
+                self._scan_battery_sensors()
+            )
             tasks = await self._list_tasks()
             actions = logic.plan_reconcile(
                 tasks,
@@ -327,6 +350,8 @@ class BatteryNotesGlue:
                 recovered_devices,
                 config_entry_id=self.entry.entry_id,
                 name_template=self._name_template,
+                skip_rechargeable=self._skip_rechargeable,
+                rechargeable_devices=rechargeable_devices,
             )
             for action in actions:
                 # Honour the clear-on-recovery option during reconcile too: skip clears
@@ -339,20 +364,24 @@ class BatteryNotesGlue:
 
     def _scan_battery_sensors(
         self,
-    ) -> tuple[dict[str, dict[str, Any]], set[str]]:
+    ) -> tuple[dict[str, dict[str, Any]], set[str], frozenset[str]]:
         """Snapshot Battery Notes' battery-low sensors for a reconcile.
 
-        Returns ``(low, recovered)``: *low* maps ``device_id`` → battery info for
-        sensors reading ``on`` (arm/create), and *recovered* is the set of devices
+        Returns ``(low, recovered, rechargeable)``: *low* maps ``device_id`` → battery
+        info for sensors reading ``on`` (arm/create), *recovered* is the set of devices
         whose sensor reads ``off`` — an affirmative "reporting and not low" signal we
-        clear on. A sensor that's ``unknown``/``unavailable`` (or absent) lands in
-        neither: that's the suspected-dead case, so we neither arm from it here (the
+        clear on — and *rechargeable* is the set of devices whose battery type is
+        rechargeable (any state), so a reconcile can retire their tasks regardless of
+        whether they're currently low, recovered, or silent. A sensor that's
+        ``unknown``/``unavailable`` (or absent) lands in neither *low* nor *recovered*:
+        that's the suspected-dead case, so we neither arm from it here (the
         not-reported path, with its day threshold, handles that) nor clear on it.
         """
         ent_reg = er.async_get(self.hass)
         dev_reg = dr.async_get(self.hass)
         low: dict[str, dict[str, Any]] = {}
         recovered: set[str] = set()
+        rechargeable: set[str] = set()
         for entity in ent_reg.entities.values():
             if entity.platform != BN_DOMAIN or entity.domain != "binary_sensor":
                 continue
@@ -363,6 +392,11 @@ class BatteryNotesGlue:
             state = self.hass.states.get(entity.entity_id)
             if state is None:
                 continue
+            # Battery Notes carries battery_type as an attribute regardless of the
+            # low sensor's on/off/unknown state, so we can classify rechargeables even
+            # for a device that has since recovered or gone silent.
+            if logic.is_rechargeable(state.attributes.get(FIELD_BATTERY_TYPE)):
+                rechargeable.add(entity.device_id)
             if state.state == "off":
                 recovered.add(entity.device_id)
                 continue
@@ -380,4 +414,4 @@ class BatteryNotesGlue:
                 "battery_quantity": attrs.get(FIELD_BATTERY_QUANTITY),
                 "battery_level": attrs.get(FIELD_BATTERY_LEVEL),
             }
-        return low, recovered
+        return low, recovered, frozenset(rechargeable)
