@@ -22,6 +22,7 @@ from .const import (
     DEFAULT_CLEAR_ON_RECOVERY,
     DEFAULT_NAME_TEMPLATE,
     DEFAULT_NOT_REPORTED_DAYS,
+    DEFAULT_SKIP_RECHARGEABLE,
     DEFAULT_TREAT_NOT_REPORTED,
     DEFAULT_TWO_WAY,
     DOMAIN,
@@ -29,6 +30,7 @@ from .const import (
     OPT_CLEAR_ON_RECOVERY,
     OPT_NAME_TEMPLATE,
     OPT_NOT_REPORTED_DAYS,
+    OPT_SKIP_RECHARGEABLE,
     OPT_TREAT_NOT_REPORTED,
     OPT_TWO_WAY,
 )
@@ -78,6 +80,12 @@ class BatteryNotesGlueOptionsFlow(OptionsFlow):
                 vol.Optional(
                     OPT_CLEAR_ON_RECOVERY,
                     default=opts.get(OPT_CLEAR_ON_RECOVERY, DEFAULT_CLEAR_ON_RECOVERY),
+                ): bool,
+                vol.Optional(
+                    OPT_SKIP_RECHARGEABLE,
+                    default=opts.get(
+                        OPT_SKIP_RECHARGEABLE, DEFAULT_SKIP_RECHARGEABLE
+                    ),
                 ): bool,
                 vol.Optional(
                     OPT_TREAT_NOT_REPORTED,

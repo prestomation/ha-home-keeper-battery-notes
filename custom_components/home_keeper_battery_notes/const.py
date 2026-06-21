@@ -58,6 +58,7 @@ OPT_TWO_WAY = "two_way"
 OPT_CLEAR_ON_RECOVERY = "clear_on_recovery"
 OPT_TREAT_NOT_REPORTED = "treat_not_reported"
 OPT_NOT_REPORTED_DAYS = "not_reported_days"
+OPT_SKIP_RECHARGEABLE = "skip_rechargeable"
 
 DEFAULT_NAME_TEMPLATE = "Replace battery: {device_name}"
 DEFAULT_TWO_WAY = True
@@ -67,6 +68,16 @@ DEFAULT_CLEAR_ON_RECOVERY = True
 # transient unknown/unavailable blips (e.g. a restart or a brief network dropout).
 DEFAULT_TREAT_NOT_REPORTED = False
 DEFAULT_NOT_REPORTED_DAYS = 3
+# On by default: a rechargeable device (phone, watch, …) going low means "charge it",
+# not "replace the battery", so a *replace*-battery task is the wrong signal and would
+# churn — re-armed on every drain, cleared on every charge — forever. Battery Notes can
+# only see instantaneous charge level, never the capacity degradation that would
+# actually justify a replacement, so the honest default is to suppress these entirely.
+# Users who do track rechargeable replacements by hand can turn it off.
+DEFAULT_SKIP_RECHARGEABLE = True
+# Battery Notes labels a rechargeable device's battery type with this string (from its
+# device library). Matched case-insensitively as a substring so variants still hit.
+RECHARGEABLE_BATTERY_TYPE = "rechargeable"
 
 # Display metadata for the "Managed by" chip Home Keeper renders on our tasks.
 MANAGED_DISPLAY_NAME = "Battery Notes"
