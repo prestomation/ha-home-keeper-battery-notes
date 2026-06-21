@@ -6,6 +6,8 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
 
 ## [Unreleased]
 
+## [0.2.0b1] - 2026-06-21
+
 ### Added
 - **Announces itself to Home Keeper's companion discovery.** When set up, the glue
   registers with Home Keeper (via its `register_companion` service) so it appears as a
