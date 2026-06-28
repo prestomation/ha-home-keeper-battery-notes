@@ -4,6 +4,17 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
+## [0.2.0b2]
+
+### Added
+
+- **Battery type chip on tasks.** Battery replacement tasks now include a compact
+  metadata chip showing the required battery spec (e.g. **2× AAA**, **CR2032**) in
+  both the Home Keeper panel task list and the dashboard card. The chip appears
+  automatically when Battery Notes reports the battery type — no configuration needed.
+  Tasks created before battery type is known get the chip retroactively when Home
+  Keeper reconciles at startup.
+
 ## [Unreleased]
 
 ## [0.2.0b1] - 2026-06-21

@@ -241,6 +241,15 @@ class BatteryNotesGlue:
                     blocking=True,
                 )
                 _LOGGER.debug("Deleted battery task %s", action.task_id)
+        elif isinstance(action, logic.UpdateChips):
+            if self._hk_ready("update_task"):
+                await self.hass.services.async_call(
+                    HK_DOMAIN,
+                    "update_task",
+                    {"task_id": action.task_id, "task_chips": action.chips},
+                    blocking=True,
+                )
+                _LOGGER.debug("Updated chips on battery task %s", action.task_id)
 
     # ── Battery Notes event handlers ─────────────────────────────────────────
     async def _on_threshold(self, event: Event) -> None:
