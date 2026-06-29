@@ -3,7 +3,5 @@ pytest-asyncio
 pytest-homeassistant-custom-component
 
 # Home Keeper provides the test fake (home_keeper.testing) the integration-fake
-# tests run against, and the real integration the docker tier installs. Pinned to
-# the feature branch that adds task_chips support (targeting 0.6.0b5); update to
-# a stable tag once that release ships.
-home-keeper @ git+https://github.com/prestomation/ha-home-keeper@claude/homekeeper-task-metadata-85bln6
+# tests run against, and the real integration the docker tier installs.
+home-keeper @ git+https://github.com/prestomation/ha-home-keeper@v0.7.0b1
