@@ -4,4 +4,6 @@ pytest-homeassistant-custom-component
 
 # Home Keeper provides the test fake (home_keeper.testing) the integration-fake
 # tests run against, and the real integration the docker tier installs.
-home-keeper @ git+https://github.com/prestomation/ha-home-keeper@v0.7.0b1
+# Pinned to the squash-merge commit of ha-home-keeper#103 (task_chips); update
+# to a release tag once ha-home-keeper cuts v0.7.0b2.
+home-keeper @ git+https://github.com/prestomation/ha-home-keeper@a9ddf7335ddb731b1de9286aab27ee09f281687d
