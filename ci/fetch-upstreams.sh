@@ -4,7 +4,7 @@
 # clone the upstreams; pin refs via HK_REF / BN_REF for reproducibility.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/..") && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)"
 STAGE="$ROOT/tests/docker/custom_components"
 HK_REPO="${HK_REPO:-https://github.com/prestomation/ha-home-keeper}"
 HK_REF="${HK_REF:-v0.7.0b1}"
