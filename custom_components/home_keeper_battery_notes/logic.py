@@ -72,7 +72,20 @@ class DeleteTask:
     device_id: str
 
 
-Action = CreateTask | ArmTask | ClearTask | DeleteTask
+@dataclass(frozen=True)
+class UpdateChips:
+    """Update ``task_chips`` on an existing task when the battery spec becomes known.
+
+    Emitted during reconcile when a task was created before battery_type was
+    available (chips=[]) but the Battery Notes entity now exposes it.
+    """
+
+    task_id: str
+    device_id: str
+    chips: list[dict[str, str]]
+
+
+Action = CreateTask | ArmTask | ClearTask | DeleteTask | UpdateChips
 
 
 # ── helpers over the Home Keeper task list ───────────────────────────────────
@@ -156,6 +169,25 @@ def _format_notes(
     return " · ".join(bits)
 
 
+def build_battery_chip(
+    battery_type: Any,
+    battery_quantity: Any,
+) -> dict[str, str] | None:
+    """Build a Home Keeper task chip for the battery spec, or ``None`` if unknown.
+
+    Returns ``{"label": "2× AAA", "icon": "mdi:battery"}`` when the battery type is
+    known. ``battery_quantity`` is incorporated when present (e.g. ``2× AAA``).
+    Returns ``None`` when battery_type is absent or blank so callers can omit the
+    chip rather than rendering an empty label.
+    """
+    if not battery_type:
+        return None
+    label = (
+        f"{battery_quantity}× {battery_type}" if battery_quantity else str(battery_type)
+    )
+    return {"label": label, "icon": "mdi:battery"}
+
+
 def build_add_task_payload(
     *,
     device_id: str,
@@ -176,6 +208,7 @@ def build_add_task_payload(
     we're installed (with ``config_entry_id`` so the protection lifts if we're
     removed). No schedule fields — it's a ``triggered`` task.
     """
+    chip = build_battery_chip(battery_type, battery_quantity)
     return {
         "name": _format_name(name_template, device_name),
         "notes": _format_notes(
@@ -188,6 +221,7 @@ def build_add_task_payload(
         "recurrence_type": "triggered",
         "device_id": device_id,
         "source": {SOURCE_NS: {"device_id": device_id}},
+        "task_chips": [chip] if chip else [],
         "managed_by": {
             "integration": SOURCE_NS,
             "display_name": MANAGED_DISPLAY_NAME,
@@ -304,19 +338,29 @@ def plan_reconcile(
     for device_id, info in low_devices.items():
         if device_id in handled:
             continue
+        battery_type = info.get("battery_type")
+        battery_quantity = info.get("battery_quantity")
         action = plan_battery_low(
             tasks,
             device_id=device_id,
             device_name=info.get("name") or device_id,
             config_entry_id=config_entry_id,
             name_template=name_template,
-            battery_type=info.get("battery_type"),
-            battery_quantity=info.get("battery_quantity"),
+            battery_type=battery_type,
+            battery_quantity=battery_quantity,
             battery_level=info.get("battery_level"),
             skip_rechargeable=skip_rechargeable,
         )
         if action is not None:
             actions.append(action)
+        # If the task already existed (ArmTask or already-armed no-op) but has no
+        # chips yet, and we now know the battery spec, patch the chips so the type
+        # shows up on the card without requiring the user to trigger a new event.
+        existing = task_for_device(tasks, device_id)
+        if existing and not existing.get("task_chips"):
+            chip = build_battery_chip(battery_type, battery_quantity)
+            if chip:
+                actions.append(UpdateChips(existing["id"], device_id, [chip]))
 
     for task in our_tasks(tasks):
         device_id = (task["source"][SOURCE_NS]).get("device_id")

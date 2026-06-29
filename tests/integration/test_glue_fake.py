@@ -99,6 +99,38 @@ async def test_low_creates_armed_task(hass: HomeAssistant) -> None:
     assert task["next_due"]  # armed / due-now
 
 
+async def test_low_with_battery_type_sets_task_chip(hass: HomeAssistant) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {
+            "device_id": DEVICE,
+            "device_name": "Motion sensor",
+            "battery_low": True,
+            "battery_type": "AAA",
+            "battery_quantity": 2,
+        },
+    )
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task is not None
+    assert task.get("task_chips") == [{"label": "2× AAA", "icon": "mdi:battery"}]
+
+
+async def test_low_without_battery_type_has_no_chip(hass: HomeAssistant) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    await _fire_threshold(hass, low=True)  # no battery_type in event
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task is not None
+    assert task.get("task_chips") == []
+
+
 async def test_replaced_clears_to_dormant(hass: HomeAssistant) -> None:
     hk = await async_setup_fake_home_keeper(hass)
     await _setup_glue(hass)
@@ -282,6 +314,7 @@ async def test_reconcile_reads_battery_attributes_into_notes(hass: HomeAssistant
     task = hk.get_task_by_source(DOMAIN, device_id=device.id)
     assert task is not None and task["next_due"]  # created + armed
     assert "CR2032" in task["notes"]
+    assert task.get("task_chips") == [{"label": "1× CR2032", "icon": "mdi:battery"}]
 
 
 async def test_rechargeable_low_creates_no_task(hass: HomeAssistant) -> None:

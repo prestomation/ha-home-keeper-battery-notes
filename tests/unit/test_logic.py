@@ -267,8 +267,11 @@ def test_reconcile_deletes_rechargeable_task_regardless_of_state():
         isinstance(a, (L.ArmTask, L.ClearTask)) and a.device_id.startswith("phone")
         for a in actions
     )
-    # A disposable battery is unaffected by the rechargeable skip.
-    assert not any(a.device_id == "aaa_low" for a in actions)
+    # A disposable battery is unaffected by the rechargeable skip (no delete/arm/clear).
+    assert not any(
+        isinstance(a, (L.DeleteTask, L.ArmTask, L.ClearTask)) and a.device_id == "aaa_low"
+        for a in actions
+    )
 
 
 def test_reconcile_ignores_foreign_tasks():
@@ -302,3 +305,109 @@ def test_name_template_falls_back_on_bad_template():
     )
     assert isinstance(action, L.CreateTask)
     assert action.payload["name"] == "Replace battery: Garage"
+
+
+# ── build_battery_chip ───────────────────────────────────────────────────────
+
+def test_build_battery_chip_with_quantity():
+    chip = L.build_battery_chip("AAA", 2)
+    assert chip == {"label": "2× AAA", "icon": "mdi:battery"}
+
+
+def test_build_battery_chip_without_quantity():
+    chip = L.build_battery_chip("CR2032", None)
+    assert chip == {"label": "CR2032", "icon": "mdi:battery"}
+
+
+def test_build_battery_chip_no_type():
+    assert L.build_battery_chip(None, 2) is None
+    assert L.build_battery_chip("", 2) is None
+
+
+# ── task_chips in add_task payload ───────────────────────────────────────────
+
+def test_build_add_task_payload_includes_chip():
+    payload = L.build_add_task_payload(
+        device_id="dev1",
+        device_name="Front door",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        battery_type="AAA",
+        battery_quantity=2,
+        battery_level=8,
+    )
+    assert payload["task_chips"] == [{"label": "2× AAA", "icon": "mdi:battery"}]
+
+
+def test_build_add_task_payload_no_chip_when_type_unknown():
+    payload = L.build_add_task_payload(
+        device_id="dev1",
+        device_name="Front door",
+        config_entry_id=CFG,
+        name_template=TMPL,
+    )
+    assert payload["task_chips"] == []
+
+
+def test_plan_battery_low_creates_task_with_chip():
+    action = L.plan_battery_low(
+        [],
+        device_id="dev1",
+        device_name="Garage",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        battery_type="CR2032",
+        battery_quantity=1,
+    )
+    assert isinstance(action, L.CreateTask)
+    assert action.payload["task_chips"] == [{"label": "1× CR2032", "icon": "mdi:battery"}]
+
+
+# ── UpdateChips during reconcile ─────────────────────────────────────────────
+
+def _task_with_chips(device_id, chips, *, next_due="2026-06-11T00:00:00-04:00"):
+    t = _task(device_id, next_due=next_due)
+    return {**t, "task_chips": chips}
+
+
+def test_reconcile_emits_update_chips_when_type_becomes_known():
+    # Task was created without a chip (battery_type was unknown at the time).
+    task = _task("dev1", next_due="2026-06-01T00:00:00-04:00")  # no task_chips
+    actions = L.plan_reconcile(
+        [task],
+        {"dev1": {"name": "Sensor", "battery_type": "AAA", "battery_quantity": 2}},
+        set(),
+        config_entry_id=CFG,
+        name_template=TMPL,
+    )
+    chip_actions = [a for a in actions if isinstance(a, L.UpdateChips)]
+    assert len(chip_actions) == 1
+    assert chip_actions[0].task_id == "task_dev1"
+    assert chip_actions[0].chips == [{"label": "2× AAA", "icon": "mdi:battery"}]
+
+
+def test_reconcile_skips_update_chips_when_chips_already_set():
+    task = _task_with_chips(
+        "dev1", [{"label": "2× AAA", "icon": "mdi:battery"}],
+        next_due="2026-06-01T00:00:00-04:00",
+    )
+    actions = L.plan_reconcile(
+        [task],
+        {"dev1": {"name": "Sensor", "battery_type": "AAA", "battery_quantity": 2}},
+        set(),
+        config_entry_id=CFG,
+        name_template=TMPL,
+    )
+    assert not any(isinstance(a, L.UpdateChips) for a in actions)
+
+
+def test_reconcile_skips_update_chips_when_type_still_unknown():
+    task = _task("dev1", next_due="2026-06-01T00:00:00-04:00")
+    actions = L.plan_reconcile(
+        [task],
+        {"dev1": {"name": "Sensor", "battery_type": None}},
+        set(),
+        config_entry_id=CFG,
+        name_template=TMPL,
+    )
+    assert not any(isinstance(a, L.UpdateChips) for a in actions)
