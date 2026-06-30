@@ -4,7 +4,7 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
-## [0.2.0b2]
+## [0.2.0] - 2026-06-30
 
 ### Added
 
@@ -15,11 +15,6 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
   Tasks created before battery type is known get the chip retroactively when Home
   Keeper reconciles at startup.
 
-## [Unreleased]
-
-## [0.2.0b1] - 2026-06-21
-
-### Added
 - **Announces itself to Home Keeper's companion discovery.** When set up, the glue
   registers with Home Keeper (via its `register_companion` service) so it appears as a
   **connected** companion under Home Keeper's **Settings → Companions** section, with a
