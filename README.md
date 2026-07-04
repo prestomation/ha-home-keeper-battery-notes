@@ -7,6 +7,7 @@
 [![License][license-shield]](LICENSE)
 [![hacs][hacs-shield]][hacs]
 ![Project Maintenance][maintenance-shield]
+[![ko-fi][kofi-shield]][kofi]
 [![HACS Validation][hacs-validation-shield]][hacs-validation]
 [![HA Version][ha-version-shield]][ha-version]
 
@@ -131,3 +132,5 @@ Badge reference links.
 [hacs-validation]: https://github.com/prestomation/ha-home-keeper-battery-notes/actions/workflows/hacs.yml
 [ha-version-shield]: https://img.shields.io/badge/Home%20Assistant-2024.1%2B-blue.svg?style=for-the-badge
 [ha-version]: https://www.home-assistant.io/
+[kofi-shield]: https://img.shields.io/badge/Ko--fi-donate-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white
+[kofi]: https://ko-fi.com/prestomation
