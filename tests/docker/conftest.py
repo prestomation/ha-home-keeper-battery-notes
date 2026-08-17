@@ -92,7 +92,8 @@ def api(token):
     """A tiny REST client bound to the authenticated session."""
 
     class _Api:
-        headers = {"Authorization": f"Bearer {token}"}
+        def __init__(self) -> None:
+            self.headers = {"Authorization": f"Bearer {token}"}
 
         def fire(self, event_type: str, data: dict) -> None:
             r = requests.post(
