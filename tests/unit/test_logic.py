@@ -2,7 +2,6 @@
 
 import bn_logic as L
 
-
 CFG = "entry123"
 TMPL = "Replace battery: {device_name}"
 

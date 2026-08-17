@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import pytest
 from homeassistant.core import HomeAssistant, SupportsResponse
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 

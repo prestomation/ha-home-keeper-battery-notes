@@ -4,6 +4,13 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
+## [0.2.1] - 2026-08-17
+
+### Fixed
+
+- **Ships a brand icon**, so the HACS default-store submission's brands check passes
+  without needing to ignore it.
+
 ## [0.2.0] - 2026-06-30
 
 ### Added
