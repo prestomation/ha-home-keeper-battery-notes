@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 from homeassistant.core import HomeAssistant, SupportsResponse
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
@@ -25,8 +26,10 @@ from custom_components.home_keeper_battery_notes.const import (
     BN_SERVICE_SET_REPLACED,
     DOMAIN,
     HK_DOMAIN,
+    OPT_CHARGE_NAME_TEMPLATE,
     OPT_CLEAR_ON_RECOVERY,
     OPT_NOT_REPORTED_DAYS,
+    OPT_RECHARGEABLE_MODE,
     OPT_SKIP_RECHARGEABLE,
     OPT_TREAT_NOT_REPORTED,
 )
@@ -338,13 +341,46 @@ async def test_rechargeable_low_creates_no_task(hass: HomeAssistant) -> None:
     assert hk.get_task_by_source(DOMAIN, device_id=DEVICE) is None
 
 
-async def test_rechargeable_low_creates_task_when_skip_disabled(
-    hass: HomeAssistant,
-) -> None:
-    # Opt-out: a user who tracks rechargeable replacements by hand still gets a task.
+async def test_rechargeable_low_creates_a_charge_task(hass: HomeAssistant) -> None:
+    # "charge": a rechargeable going low is a charge chore, with its own wording,
+    # chip icon and completion prompt.
     hk = await async_setup_fake_home_keeper(hass)
     entry = MockConfigEntry(
-        domain=DOMAIN, data={}, options={OPT_SKIP_RECHARGEABLE: False}
+        domain=DOMAIN, data={}, options={OPT_RECHARGEABLE_MODE: "charge"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {
+            "device_id": DEVICE,
+            "device_name": "Bedroom valve",
+            "battery_low": True,
+            "battery_type": "Rechargeable",
+            "battery_quantity": 1,
+        },
+    )
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task is not None and task["next_due"]  # created + armed
+    assert task["name"] == "Charge battery: Bedroom valve"
+    assert task["source"][DOMAIN]["kind"] == "charge"
+    assert task["task_chips"] == [
+        {"label": "1× Rechargeable", "icon": "mdi:battery-charging"}
+    ]
+    assert task["managed_by"]["completion_prompt"] == "Mark battery as charged?"
+
+
+async def test_rechargeable_low_creates_replace_task_in_replace_mode(
+    hass: HomeAssistant,
+) -> None:
+    # Opt-out: a user who tracks rechargeable replacements by hand still gets one.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_RECHARGEABLE_MODE: "replace"}
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -361,7 +397,121 @@ async def test_rechargeable_low_creates_task_when_skip_disabled(
     )
     await hass.async_block_till_done()
 
-    assert hk.get_task_by_source(DOMAIN, device_id=DEVICE) is not None
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task is not None
+    assert task["name"] == "Replace battery: Fold7"
+
+
+async def test_legacy_skip_rechargeable_off_now_means_charge(
+    hass: HomeAssistant,
+) -> None:
+    # An entry saved before rechargeable_mode existed carries only the old boolean.
+    # Off meant "a low rechargeable is a task" — which is a charge task now.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_SKIP_RECHARGEABLE: False}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {
+            "device_id": DEVICE,
+            "device_name": "Bedroom valve",
+            "battery_low": True,
+            "battery_type": "Rechargeable",
+        },
+    )
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task is not None
+    assert task["name"] == "Charge battery: Bedroom valve"
+
+
+async def test_charge_completion_is_not_mirrored_to_battery_notes(
+    hass: HomeAssistant,
+) -> None:
+    # Charging isn't replacing. Mirroring it would stamp a replacement date on the
+    # device that never happened, falsifying Battery Notes' own history.
+    hk = await async_setup_fake_home_keeper(hass)
+    calls = _stub_set_replaced(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_RECHARGEABLE_MODE: "charge"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {
+            "device_id": DEVICE,
+            "device_name": "Bedroom valve",
+            "battery_low": True,
+            "battery_type": "Rechargeable",
+        },
+    )
+    await hass.async_block_till_done()
+    task_id = hk.get_task_by_source(DOMAIN, device_id=DEVICE)["id"]
+
+    hk.fire_user_completion(task_id)  # user checks the charge task off
+    await hass.async_block_till_done()
+
+    assert calls == []
+    # Home Keeper still recorded it: the charge log is the point of the cycle.
+    assert len(hk.get_task_by_source(DOMAIN, device_id=DEVICE)["completions"]) == 1
+
+
+async def test_reconcile_converts_a_legacy_replace_task_to_a_charge_task(
+    hass: HomeAssistant,
+) -> None:
+    # Switching to "charge" with the rechargeable currently low converts its task.
+    # The name is locked and Home Keeper strips locked fields from update_task, so the
+    # conversion is a delete + create — the old id is gone, the new task is armed.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_RECHARGEABLE_MODE: "charge"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    bn_entry = MockConfigEntry(domain=BN_DOMAIN, data={})
+    bn_entry.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=bn_entry.entry_id,
+        identifiers={(BN_DOMAIN, "valve")},
+        name="Bedroom valve",
+    )
+    ent = er.async_get(hass).async_get_or_create(
+        "binary_sensor", BN_DOMAIN, "valve_low",
+        device_id=device.id, original_device_class="battery",
+    )
+    hass.states.async_set(
+        ent.entity_id, "on", {"battery_type": "Rechargeable", "battery_quantity": 1}
+    )
+    hk.tasks["t_valve"] = {
+        "id": "t_valve",
+        "name": "Replace battery: Bedroom valve",
+        "recurrence_type": "triggered",
+        "next_due": None,
+        "device_id": device.id,
+        "source": {DOMAIN: {"device_id": device.id}},  # no kind — a legacy task
+        "completions": [],
+    }
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    assert "t_valve" not in hk.tasks
+    task = hk.get_task_by_source(DOMAIN, device_id=device.id)
+    assert task is not None and task["next_due"]  # recreated, armed
+    assert task["name"] == "Charge battery: Bedroom valve"
+    assert task["source"][DOMAIN]["kind"] == "charge"
+    ours = [t for t in hk.tasks.values() if (t.get("source") or {}).get(DOMAIN)]
+    assert len(ours) == 1  # converted, not duplicated
 
 
 async def test_reconcile_removes_existing_rechargeable_task(hass: HomeAssistant) -> None:
@@ -502,3 +652,51 @@ async def test_remove_entry_tolerates_list_tasks_error(hass: HomeAssistant) -> N
     )
     await hass.config_entries.async_remove(entry.entry_id)  # must not raise
     await hass.async_block_till_done()
+
+
+async def test_options_flow_offers_the_rechargeable_modes(hass: HomeAssistant) -> None:
+    # The options form renders and round-trips. Worth asserting directly: a schema
+    # this rich is only otherwise exercised by a user opening the Configure dialog.
+    await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    defaults = {
+        key.schema: key.default() for key in result["data_schema"].schema if key.default
+    }
+    assert defaults[OPT_RECHARGEABLE_MODE] == "skip"  # untouched entry → the default
+    assert defaults[OPT_CHARGE_NAME_TEMPLATE] == "Charge battery: {device_name}"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={**defaults, OPT_RECHARGEABLE_MODE: "charge"},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[OPT_RECHARGEABLE_MODE] == "charge"
+    assert entry.runtime_data._rechargeable_mode == "charge"
+
+
+async def test_options_flow_opens_on_the_migrated_legacy_mode(
+    hass: HomeAssistant,
+) -> None:
+    # An entry still carrying the old boolean must open on the mode it's actually
+    # getting, not on the default — otherwise saving anything silently changes it.
+    await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_SKIP_RECHARGEABLE: False}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    default = next(
+        key.default()
+        for key in result["data_schema"].schema
+        if key.schema == OPT_RECHARGEABLE_MODE
+    )
+    assert default == "charge"

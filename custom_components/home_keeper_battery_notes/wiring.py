@@ -32,10 +32,10 @@ from .const import (
     BN_FIELD_RAISE_EVENTS,
     BN_SERVICE_CHECK_LAST_REPORTED,
     BN_SERVICE_SET_REPLACED,
+    DEFAULT_CHARGE_NAME_TEMPLATE,
     DEFAULT_CLEAR_ON_RECOVERY,
     DEFAULT_NAME_TEMPLATE,
     DEFAULT_NOT_REPORTED_DAYS,
-    DEFAULT_SKIP_RECHARGEABLE,
     DEFAULT_TREAT_NOT_REPORTED,
     DEFAULT_TWO_WAY,
     DOMAIN,
@@ -50,10 +50,11 @@ from .const import (
     HK_EVENT_REGISTER_COMPANIONS,
     HK_EVENT_TASK_COMPLETED,
     HK_SERVICE_REGISTER_COMPANION,
+    KIND_CHARGE,
+    OPT_CHARGE_NAME_TEMPLATE,
     OPT_CLEAR_ON_RECOVERY,
     OPT_NAME_TEMPLATE,
     OPT_NOT_REPORTED_DAYS,
-    OPT_SKIP_RECHARGEABLE,
     OPT_TREAT_NOT_REPORTED,
     OPT_TWO_WAY,
     ORIGIN,
@@ -107,9 +108,13 @@ class BatteryNotesGlue:
         )
 
     @property
-    def _skip_rechargeable(self) -> bool:
+    def _rechargeable_mode(self) -> str:
+        return logic.resolve_rechargeable_mode(self.entry.options)
+
+    @property
+    def _charge_name_template(self) -> str:
         return self.entry.options.get(
-            OPT_SKIP_RECHARGEABLE, DEFAULT_SKIP_RECHARGEABLE
+            OPT_CHARGE_NAME_TEMPLATE, DEFAULT_CHARGE_NAME_TEMPLATE
         )
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -184,7 +189,8 @@ class BatteryNotesGlue:
                     "icon": "mdi:battery-alert-variant-outline",
                     "description": (
                         "Turns Battery Notes low-battery alerts into Home Keeper "
-                        "“replace battery” tasks, kept in sync both ways."
+                        "“replace battery” (or “charge battery”) tasks, kept in "
+                        "sync both ways."
                     ),
                     "config_entry_id": self.entry.entry_id,
                     "docs_url": (
@@ -242,6 +248,25 @@ class BatteryNotesGlue:
                     blocking=True,
                 )
                 _LOGGER.debug("Deleted battery task %s", action.task_id)
+        elif isinstance(action, logic.RecreateTask):
+            # Delete then add: the task's name is locked, and Home Keeper strips locked
+            # fields from every update_task payload, so a kind change can't be a rename.
+            if self._hk_ready("delete_task") and self._hk_ready("add_task"):
+                await self.hass.services.async_call(
+                    HK_DOMAIN,
+                    "delete_task",
+                    {"task_id": action.task_id, "force": True},
+                    blocking=True,
+                )
+                await self.hass.services.async_call(
+                    HK_DOMAIN, "add_task", action.payload, blocking=True
+                )
+                _LOGGER.debug(
+                    "Recreated battery task %s for device %s as a %s task",
+                    action.task_id,
+                    action.device_id,
+                    action.payload["source"][SOURCE_NS]["kind"],
+                )
         elif isinstance(action, logic.UpdateChips) and self._hk_ready("update_task"):
             await self.hass.services.async_call(
                 HK_DOMAIN,
@@ -269,7 +294,8 @@ class BatteryNotesGlue:
                     battery_type=data.get(FIELD_BATTERY_TYPE),
                     battery_quantity=data.get(FIELD_BATTERY_QUANTITY),
                     battery_level=data.get(FIELD_BATTERY_LEVEL),
-                    skip_rechargeable=self._skip_rechargeable,
+                    charge_name_template=self._charge_name_template,
+                    rechargeable_mode=self._rechargeable_mode,
                 )
             elif self._clear_on_recovery:
                 action = logic.plan_battery_cleared(tasks, device_id=device_id)
@@ -312,7 +338,8 @@ class BatteryNotesGlue:
                 battery_quantity=event.data.get(FIELD_BATTERY_QUANTITY),
                 reason="not_reported",
                 last_reported_days=event.data.get(FIELD_LAST_REPORTED_DAYS),
-                skip_rechargeable=self._skip_rechargeable,
+                charge_name_template=self._charge_name_template,
+                rechargeable_mode=self._rechargeable_mode,
             )
             if action is not None:
                 await self._execute(action)
@@ -351,6 +378,11 @@ class BatteryNotesGlue:
         We just push "replaced" to Battery Notes — Home Keeper has already recorded the
         completion and set the task dormant, so we must not re-complete or re-arm
         (that would loop). See Home Keeper INTEGRATING.md §4.
+
+        A *charge* task is never mirrored: the user plugged the device in, they did not
+        change the cell, and Battery Notes has no "charged" to record — pushing
+        set_battery_replaced would stamp a replacement date that never happened and
+        falsify the device's replacement history.
         """
         if not self._two_way:
             return
@@ -359,6 +391,8 @@ class BatteryNotesGlue:
         src = (event.data.get("source") or {}).get(SOURCE_NS)
         if not isinstance(src, dict):
             return  # not one of our tasks
+        if src.get("kind") == KIND_CHARGE:
+            return  # charged, not replaced — nothing to tell Battery Notes
         device_id = src.get("device_id")
         if not device_id:
             return
@@ -400,7 +434,8 @@ class BatteryNotesGlue:
                 recovered_devices,
                 config_entry_id=self.entry.entry_id,
                 name_template=self._name_template,
-                skip_rechargeable=self._skip_rechargeable,
+                charge_name_template=self._charge_name_template,
+                rechargeable_mode=self._rechargeable_mode,
                 rechargeable_devices=rechargeable_devices,
             )
             for action in actions:

@@ -4,14 +4,26 @@ import bn_logic as L
 
 CFG = "entry123"
 TMPL = "Replace battery: {device_name}"
+CHARGE_TMPL = "Charge battery: {device_name}"
 
 
 def _task(device_id, *, next_due="2026-06-11T00:00:00-04:00", extra_source=None):
-    """A Home-Keeper-shaped task owned by us (or by *extra_source* if given)."""
+    """A Home-Keeper-shaped task owned by us (or by *extra_source* if given).
+
+    Carries no ``kind``, like every task written before charge tasks existed — so the
+    conversion path is exercised by the plain helper.
+    """
     source = {"home_keeper_battery_notes": {"device_id": device_id}}
     if extra_source is not None:
         source = extra_source
     return {"id": f"task_{device_id}", "next_due": next_due, "source": source}
+
+
+def _charge_task(device_id, *, next_due="2026-06-11T00:00:00-04:00"):
+    """A task we already created as a charge task."""
+    task = _task(device_id, next_due=next_due)
+    task["source"]["home_keeper_battery_notes"]["kind"] = "charge"
+    return task
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -81,7 +93,7 @@ def test_is_rechargeable_matches_label_case_insensitively():
 
 
 def test_low_rechargeable_skipped_creates_no_task():
-    # A low charge on a rechargeable means "charge it", not "replace it": no task.
+    # "skip": a low charge on a rechargeable is the owner's business, not a task.
     action = L.plan_battery_low(
         [],
         device_id="phone",
@@ -91,13 +103,13 @@ def test_low_rechargeable_skipped_creates_no_task():
         battery_type="Rechargeable",
         battery_quantity=1,
         battery_level=9,
-        skip_rechargeable=True,
+        rechargeable_mode="skip",
     )
     assert action is None
 
 
 def test_low_rechargeable_deletes_existing_task():
-    # An upgrade retires a stale replace-battery task created before the option.
+    # An upgrade into "skip" retires a stale replace-battery task.
     tasks = [_task("phone", next_due=None)]
     action = L.plan_battery_low(
         tasks,
@@ -106,27 +118,139 @@ def test_low_rechargeable_deletes_existing_task():
         config_entry_id=CFG,
         name_template=TMPL,
         battery_type="Rechargeable",
-        skip_rechargeable=True,
+        rechargeable_mode="skip",
     )
     assert action == L.DeleteTask("task_phone", "phone")
 
 
-def test_low_rechargeable_still_created_when_option_off():
-    # Opt-out: a user who tracks rechargeable replacements by hand still gets a task.
+def test_low_rechargeable_creates_charge_task():
+    # "charge": the valve/lock case — a charge task, named from its own template, with
+    # its own kind, chip icon and completion prompt.
+    action = L.plan_battery_low(
+        [],
+        device_id="valve",
+        device_name="Bedroom valve",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        charge_name_template=CHARGE_TMPL,
+        battery_type="Rechargeable",
+        battery_quantity=1,
+        battery_level=9,
+        rechargeable_mode="charge",
+    )
+    assert isinstance(action, L.CreateTask)
+    p = action.payload
+    assert p["name"] == "Charge battery: Bedroom valve"
+    assert p["source"]["home_keeper_battery_notes"] == {
+        "device_id": "valve",
+        "kind": "charge",
+    }
+    assert p["task_chips"] == [{"label": "1× Rechargeable", "icon": "mdi:battery-charging"}]
+    assert p["managed_by"]["completion_prompt"] == "Mark battery as charged?"
+    assert p["recurrence_type"] == "triggered"
+
+
+def test_low_rechargeable_replace_mode_creates_replace_task():
+    # "replace": the opt-out for users who track rechargeable replacements by hand.
     action = L.plan_battery_low(
         [],
         device_id="phone",
         device_name="Fold7",
         config_entry_id=CFG,
         name_template=TMPL,
+        charge_name_template=CHARGE_TMPL,
         battery_type="Rechargeable",
-        skip_rechargeable=False,
+        rechargeable_mode="replace",
     )
     assert isinstance(action, L.CreateTask)
+    assert action.payload["name"] == "Replace battery: Fold7"
+    assert action.payload["source"]["home_keeper_battery_notes"]["kind"] == "replace"
+
+
+def test_disposable_is_unaffected_by_charge_mode():
+    # The mode only routes rechargeables — an AAA still gets a replace task.
+    action = L.plan_battery_low(
+        [],
+        device_id="dev1",
+        device_name="Front door",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        charge_name_template=CHARGE_TMPL,
+        battery_type="AAA",
+        rechargeable_mode="charge",
+    )
+    assert isinstance(action, L.CreateTask)
+    assert action.payload["name"] == "Replace battery: Front door"
+    assert action.payload["task_chips"] == [{"label": "AAA", "icon": "mdi:battery"}]
+
+
+def test_task_kind_defaults_to_replace_for_a_legacy_task():
+    # Tasks written before kinds existed carry none, and were replace tasks.
+    assert L.task_kind(_task("dev1")) == "replace"
+    assert L.task_kind({"source": {"home_keeper_battery_notes": {"kind": "charge"}}}) == (
+        "charge"
+    )
+    # An unrecognised value is not trusted into the payload we'd build from it.
+    assert L.task_kind({"source": {"home_keeper_battery_notes": {"kind": "nope"}}}) == (
+        "replace"
+    )
+
+
+def test_low_recreates_a_task_whose_kind_no_longer_matches():
+    # Switching to "charge" converts the stale replace task. The name is locked and
+    # Home Keeper strips locked fields from update_task, so it can't be a rename.
+    tasks = [_task("valve", next_due=None)]
+    action = L.plan_battery_low(
+        tasks,
+        device_id="valve",
+        device_name="Bedroom valve",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        charge_name_template=CHARGE_TMPL,
+        battery_type="Rechargeable",
+        rechargeable_mode="charge",
+    )
+    assert isinstance(action, L.RecreateTask)
+    assert action.task_id == "task_valve"
+    assert action.device_id == "valve"
+    assert action.payload["name"] == "Charge battery: Bedroom valve"
+    assert action.payload["source"]["home_keeper_battery_notes"]["kind"] == "charge"
+
+
+def test_low_arms_an_existing_charge_task_rather_than_recreating_it():
+    # Once converted, the same charge task is re-armed on every drain — that cycle is
+    # the point, and recreating it each time would throw the charge log away.
+    tasks = [_charge_task("valve", next_due=None)]
+    action = L.plan_battery_low(
+        tasks,
+        device_id="valve",
+        device_name="Bedroom valve",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        charge_name_template=CHARGE_TMPL,
+        battery_type="Rechargeable",
+        rechargeable_mode="charge",
+    )
+    assert action == L.ArmTask("task_valve", "valve")
+
+
+def test_armed_charge_task_is_a_noop():
+    tasks = [_charge_task("valve")]
+    action = L.plan_battery_low(
+        tasks,
+        device_id="valve",
+        device_name="Bedroom valve",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        charge_name_template=CHARGE_TMPL,
+        battery_type="Rechargeable",
+        rechargeable_mode="charge",
+    )
+    assert action is None
 
 
 def test_not_reported_rechargeable_is_skipped_too():
-    # The suspected-dead path honours the same skip (a rechargeable can't be "dead").
+    # The suspected-dead path honours the same mode (a rechargeable can't be "dead").
     action = L.plan_battery_low(
         [],
         device_id="phone",
@@ -136,9 +260,56 @@ def test_not_reported_rechargeable_is_skipped_too():
         battery_type="Rechargeable",
         reason="not_reported",
         last_reported_days=12,
-        skip_rechargeable=True,
+        rechargeable_mode="skip",
     )
     assert action is None
+
+
+def test_not_reported_rechargeable_charges_when_mode_is_charge():
+    # A rechargeable that's gone silent is a flat pack: charge it.
+    action = L.plan_battery_low(
+        [],
+        device_id="valve",
+        device_name="Bedroom valve",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        charge_name_template=CHARGE_TMPL,
+        battery_type="Rechargeable",
+        reason="not_reported",
+        last_reported_days=12,
+        rechargeable_mode="charge",
+    )
+    assert isinstance(action, L.CreateTask)
+    assert action.payload["name"] == "Charge battery: Bedroom valve"
+    assert "not reporting for 12 days" in action.payload["notes"]
+
+
+# ── the rechargeable_mode option (with its legacy boolean) ───────────────────
+def test_resolve_rechargeable_mode_reads_the_mode():
+    assert L.resolve_rechargeable_mode({"rechargeable_mode": "charge"}) == "charge"
+    assert L.resolve_rechargeable_mode({"rechargeable_mode": "replace"}) == "replace"
+    assert L.resolve_rechargeable_mode({"rechargeable_mode": "skip"}) == "skip"
+
+
+def test_resolve_rechargeable_mode_defaults_to_skip():
+    # Nothing configured (and nothing recognisable) leaves rechargeables alone.
+    assert L.resolve_rechargeable_mode({}) == "skip"
+    assert L.resolve_rechargeable_mode(None) == "skip"
+    assert L.resolve_rechargeable_mode({"rechargeable_mode": "bogus"}) == "skip"
+
+
+def test_resolve_rechargeable_mode_migrates_the_legacy_boolean():
+    # skip_rechargeable off meant "a low rechargeable is a task" — which is a *charge*
+    # task now that we can say so; on meant skip.
+    assert L.resolve_rechargeable_mode({"skip_rechargeable": False}) == "charge"
+    assert L.resolve_rechargeable_mode({"skip_rechargeable": True}) == "skip"
+    # An explicit mode wins over a boolean left behind next to it.
+    assert (
+        L.resolve_rechargeable_mode(
+            {"skip_rechargeable": False, "rechargeable_mode": "skip"}
+        )
+        == "skip"
+    )
 
 
 # ── battery cleared ──────────────────────────────────────────────────────────
@@ -255,7 +426,7 @@ def test_reconcile_deletes_rechargeable_task_regardless_of_state():
         set(),
         config_entry_id=CFG,
         name_template=TMPL,
-        skip_rechargeable=True,
+        rechargeable_mode="skip",
         rechargeable_devices=frozenset({"phone_recovered", "phone_low"}),
     )
     assert L.DeleteTask("task_phone_recovered", "phone_recovered") in actions
@@ -271,6 +442,63 @@ def test_reconcile_deletes_rechargeable_task_regardless_of_state():
         isinstance(a, (L.DeleteTask, L.ArmTask, L.ClearTask)) and a.device_id == "aaa_low"
         for a in actions
     )
+
+
+def test_reconcile_converts_a_low_rechargeable_to_a_charge_task():
+    # Switching to "charge" with the device currently low: one RecreateTask, and no
+    # stray UpdateChips for the id that's about to stop existing.
+    tasks = [_task("valve", next_due=None)]
+    actions = L.plan_reconcile(
+        tasks,
+        {"valve": {"name": "Bedroom valve", "battery_type": "Rechargeable", "battery_quantity": 1}},
+        set(),
+        config_entry_id=CFG,
+        name_template=TMPL,
+        charge_name_template=CHARGE_TMPL,
+        rechargeable_mode="charge",
+        rechargeable_devices=frozenset({"valve"}),
+    )
+    assert len(actions) == 1
+    assert isinstance(actions[0], L.RecreateTask)
+    assert actions[0].payload["name"] == "Charge battery: Bedroom valve"
+    assert actions[0].payload["task_chips"] == [
+        {"label": "1× Rechargeable", "icon": "mdi:battery-charging"}
+    ]
+
+
+def test_reconcile_retires_a_wrong_kind_task_for_a_charged_rechargeable():
+    # Same switch, but the device isn't currently low. It must not be re-created armed
+    # (nothing is due), so the stale replace task is simply retired; the next drain
+    # creates the charge task.
+    tasks = [_task("valve", next_due=None)]
+    actions = L.plan_reconcile(
+        tasks,
+        {},
+        {"valve"},
+        config_entry_id=CFG,
+        name_template=TMPL,
+        charge_name_template=CHARGE_TMPL,
+        rechargeable_mode="charge",
+        rechargeable_devices=frozenset({"valve"}),
+    )
+    assert actions == [L.DeleteTask("task_valve", "valve")]
+
+
+def test_reconcile_leaves_a_matching_charge_task_alone():
+    # A charge task on a recovered rechargeable is cleared, not retired — that's the
+    # charge being recorded, which is the whole point of the cycle.
+    tasks = [_charge_task("valve")]
+    actions = L.plan_reconcile(
+        tasks,
+        {},
+        {"valve"},
+        config_entry_id=CFG,
+        name_template=TMPL,
+        charge_name_template=CHARGE_TMPL,
+        rechargeable_mode="charge",
+        rechargeable_devices=frozenset({"valve"}),
+    )
+    assert actions == [L.ClearTask("task_valve", "valve")]
 
 
 def test_reconcile_ignores_foreign_tasks():
@@ -306,6 +534,20 @@ def test_name_template_falls_back_on_bad_template():
     assert action.payload["name"] == "Replace battery: Garage"
 
 
+def test_charge_name_template_falls_back_to_the_charge_default():
+    # A mis-typed template must not drop the task, and must not fall back to the
+    # *replace* wording for a battery we're asking the user to charge.
+    action = L.plan_battery_low(
+        [], device_id="d", device_name="Garage", config_entry_id=CFG,
+        name_template=TMPL,
+        charge_name_template="Battery {nonexistent}",
+        battery_type="Rechargeable",
+        rechargeable_mode="charge",
+    )
+    assert isinstance(action, L.CreateTask)
+    assert action.payload["name"] == "Charge battery: Garage"
+
+
 # ── build_battery_chip ───────────────────────────────────────────────────────
 
 def test_build_battery_chip_with_quantity():
@@ -321,6 +563,11 @@ def test_build_battery_chip_without_quantity():
 def test_build_battery_chip_no_type():
     assert L.build_battery_chip(None, 2) is None
     assert L.build_battery_chip("", 2) is None
+
+
+def test_build_battery_chip_charge_kind_uses_the_charging_icon():
+    chip = L.build_battery_chip("Rechargeable", 1, kind="charge")
+    assert chip == {"label": "1× Rechargeable", "icon": "mdi:battery-charging"}
 
 
 # ── task_chips in add_task payload ───────────────────────────────────────────
