@@ -35,10 +35,11 @@ The two that matter most here:
   belongs in `README.md` or the PR body.
 - **Credit an outside contributor in the bullet for their change.** End the bullet
   with `(Thanks @user!)`, after `(Fixes #N)` if the bullet has one. The credit does
-  not count against the three-sentence budget. Every change that came from a PR by
-  someone outside the project gets one, in the same change that writes the bullet.
-  This repository takes most of its changes from contributors, so the credit is the
-  rule, not the exception.
+  not count against the three-sentence budget. An outside contributor is anyone
+  without write access to the repository when the PR opens. Their change gets a
+  credit in the same PR that writes the bullet. If a maintainer and a contributor
+  share the work, the contributor gets the credit. This repository takes most of its
+  changes from contributors, so the credit is the rule, not the exception.
 
 ## Beta / pre-release releases
 
