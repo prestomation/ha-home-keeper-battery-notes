@@ -26,6 +26,7 @@ from custom_components.home_keeper_battery_notes.const import (
     DOMAIN,
     HK_DOMAIN,
     OPT_CLEAR_ON_RECOVERY,
+    OPT_LABELS,
     OPT_NOT_REPORTED_DAYS,
     OPT_SKIP_RECHARGEABLE,
     OPT_TREAT_NOT_REPORTED,
@@ -502,3 +503,17 @@ async def test_remove_entry_tolerates_list_tasks_error(hass: HomeAssistant) -> N
     )
     await hass.config_entries.async_remove(entry.entry_id)  # must not raise
     await hass.async_block_till_done()
+
+
+async def test_low_creates_task_with_configured_labels(hass: HomeAssistant) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={OPT_LABELS: ["batterien"]})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    await _fire_threshold(hass, low=True)
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task is not None
+    assert task.get("labels") == ["batterien"]

@@ -64,6 +64,7 @@ OPT_CLEAR_ON_RECOVERY = "clear_on_recovery"
 OPT_TREAT_NOT_REPORTED = "treat_not_reported"
 OPT_NOT_REPORTED_DAYS = "not_reported_days"
 OPT_SKIP_RECHARGEABLE = "skip_rechargeable"
+OPT_LABELS = "labels"
 
 DEFAULT_NAME_TEMPLATE = "Replace battery: {device_name}"
 DEFAULT_TWO_WAY = True
@@ -80,6 +81,11 @@ DEFAULT_NOT_REPORTED_DAYS = 3
 # actually justify a replacement, so the honest default is to suppress these entirely.
 # Users who do track rechargeable replacements by hand can turn it off.
 DEFAULT_SKIP_RECHARGEABLE = True
+# Optional Home Assistant labels applied to every task the integration creates. Empty
+# (the default) means no labels. Picked via a multi-select label selector, so the
+# stored value is a list of Home Assistant *label ids* (slugs), which is what Home
+# Keeper expects on `add_task`.
+DEFAULT_LABELS = ()
 # Battery Notes labels a rechargeable device's battery type with this string (from its
 # device library). Matched case-insensitively as a substring so variants still hit.
 RECHARGEABLE_BATTERY_TYPE = "rechargeable"

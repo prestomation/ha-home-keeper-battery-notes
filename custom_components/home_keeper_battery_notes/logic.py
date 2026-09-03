@@ -199,6 +199,7 @@ def build_add_task_payload(
     battery_level: Any = None,
     reason: str = "low",
     last_reported_days: Any = None,
+    labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """The ``home_keeper.add_task`` payload for a new battery task (born armed).
 
@@ -221,6 +222,7 @@ def build_add_task_payload(
         "recurrence_type": "triggered",
         "device_id": device_id,
         "source": {SOURCE_NS: {"device_id": device_id}},
+        "labels": list(labels) if labels else [],
         "task_chips": [chip] if chip else [],
         "managed_by": {
             "integration": SOURCE_NS,
@@ -248,6 +250,7 @@ def plan_battery_low(
     reason: str = "low",
     last_reported_days: Any = None,
     skip_rechargeable: bool = False,
+    labels: list[str] | None = None,
 ) -> Action | None:
     """Decide what to do when *device_id* needs a battery replaced.
 
@@ -277,6 +280,7 @@ def plan_battery_low(
                 battery_level=battery_level,
                 reason=reason,
                 last_reported_days=last_reported_days,
+                labels=labels,
             ),
         )
     if is_armed(task):
@@ -304,6 +308,7 @@ def plan_reconcile(
     name_template: str,
     skip_rechargeable: bool = False,
     rechargeable_devices: frozenset[str] = frozenset(),
+    labels: list[str] | None = None,
 ) -> list[Action]:
     """Converge the full state at startup (catch up on signals missed while down).
 
@@ -350,6 +355,7 @@ def plan_reconcile(
             battery_quantity=battery_quantity,
             battery_level=info.get("battery_level"),
             skip_rechargeable=skip_rechargeable,
+            labels=labels,
         )
         if action is not None:
             actions.append(action)

@@ -33,6 +33,7 @@ from .const import (
     BN_SERVICE_CHECK_LAST_REPORTED,
     BN_SERVICE_SET_REPLACED,
     DEFAULT_CLEAR_ON_RECOVERY,
+    DEFAULT_LABELS,
     DEFAULT_NAME_TEMPLATE,
     DEFAULT_NOT_REPORTED_DAYS,
     DEFAULT_SKIP_RECHARGEABLE,
@@ -51,6 +52,7 @@ from .const import (
     HK_EVENT_TASK_COMPLETED,
     HK_SERVICE_REGISTER_COMPANION,
     OPT_CLEAR_ON_RECOVERY,
+    OPT_LABELS,
     OPT_NAME_TEMPLATE,
     OPT_NOT_REPORTED_DAYS,
     OPT_SKIP_RECHARGEABLE,
@@ -85,6 +87,11 @@ class BatteryNotesGlue:
     @property
     def _name_template(self) -> str:
         return self.entry.options.get(OPT_NAME_TEMPLATE, DEFAULT_NAME_TEMPLATE)
+
+    @property
+    def _labels(self) -> list[str]:
+        """The optional HA label ids applied to created tasks (empty = none)."""
+        return list(self.entry.options.get(OPT_LABELS, DEFAULT_LABELS))
 
     @property
     def _two_way(self) -> bool:
@@ -270,6 +277,7 @@ class BatteryNotesGlue:
                     battery_quantity=data.get(FIELD_BATTERY_QUANTITY),
                     battery_level=data.get(FIELD_BATTERY_LEVEL),
                     skip_rechargeable=self._skip_rechargeable,
+                    labels=self._labels,
                 )
             elif self._clear_on_recovery:
                 action = logic.plan_battery_cleared(tasks, device_id=device_id)
@@ -313,6 +321,7 @@ class BatteryNotesGlue:
                 reason="not_reported",
                 last_reported_days=event.data.get(FIELD_LAST_REPORTED_DAYS),
                 skip_rechargeable=self._skip_rechargeable,
+                labels=self._labels,
             )
             if action is not None:
                 await self._execute(action)
@@ -402,6 +411,7 @@ class BatteryNotesGlue:
                 name_template=self._name_template,
                 skip_rechargeable=self._skip_rechargeable,
                 rechargeable_devices=rechargeable_devices,
+                labels=self._labels,
             )
             for action in actions:
                 # Honour the clear-on-recovery option during reconcile too: skip clears

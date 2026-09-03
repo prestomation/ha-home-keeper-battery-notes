@@ -4,6 +4,16 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
+## [Unreleased]
+
+### Added
+
+- **Optional Home Assistant labels.** A new **Home Assistant labels** option applies
+  Home Assistant labels (picked from your labels) to every task the integration creates,
+  so battery replacement tasks can feed a `label_state` group, be scoped by a dashboard
+  card, or match a Home Keeper notification profile — without a separate re-labelling
+  automation. Unset (the default) means no labels.
+
 ## [0.2.1] - 2026-08-17
 
 ### Fixed

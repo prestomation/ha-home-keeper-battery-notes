@@ -17,9 +17,11 @@ from homeassistant.config_entries import (
     OptionsFlow,
 )
 from homeassistant.core import callback
+from homeassistant.helpers import selector
 
 from .const import (
     DEFAULT_CLEAR_ON_RECOVERY,
+    DEFAULT_LABELS,
     DEFAULT_NAME_TEMPLATE,
     DEFAULT_NOT_REPORTED_DAYS,
     DEFAULT_SKIP_RECHARGEABLE,
@@ -28,6 +30,7 @@ from .const import (
     DOMAIN,
     MANAGED_DISPLAY_NAME,
     OPT_CLEAR_ON_RECOVERY,
+    OPT_LABELS,
     OPT_NAME_TEMPLATE,
     OPT_NOT_REPORTED_DAYS,
     OPT_SKIP_RECHARGEABLE,
@@ -73,6 +76,10 @@ class BatteryNotesGlueOptionsFlow(OptionsFlow):
                     OPT_NAME_TEMPLATE,
                     default=opts.get(OPT_NAME_TEMPLATE, DEFAULT_NAME_TEMPLATE),
                 ): str,
+                vol.Optional(
+                    OPT_LABELS,
+                    default=opts.get(OPT_LABELS, DEFAULT_LABELS),
+                ): selector.LabelSelector(selector.LabelSelectorConfig(multiple=True)),
                 vol.Optional(
                     OPT_TWO_WAY,
                     default=opts.get(OPT_TWO_WAY, DEFAULT_TWO_WAY),

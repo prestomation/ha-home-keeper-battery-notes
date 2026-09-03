@@ -63,6 +63,7 @@ this bridge to anyone who has Battery Notes installed but hasn't added it yet.
 ### Options
 
 - **Task name template** — default `Replace battery: {device_name}`.
+- **Home Assistant labels** — optional Home Assistant labels (picked from your labels) applied to every task the integration creates (default **off** = none).
 - **Two-way sync** — completing in Home Keeper marks the battery replaced in Battery Notes (default on).
 - **Clear on recovery** — clear the task if a battery's level recovers on its own (default on).
 - **Skip rechargeable batteries** — don't raise replace-battery tasks for rechargeables (default **on**; see below).

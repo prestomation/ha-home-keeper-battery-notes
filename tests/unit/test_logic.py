@@ -410,3 +410,66 @@ def test_reconcile_skips_update_chips_when_type_still_unknown():
         name_template=TMPL,
     )
     assert not any(isinstance(a, L.UpdateChips) for a in actions)
+
+
+# ── labels on the add_task payload ───────────────────────────────────────────
+
+def test_build_add_task_payload_includes_label_when_set():
+    payload = L.build_add_task_payload(
+        device_id="dev1",
+        device_name="Front door",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        labels=["batterien"],
+    )
+    assert payload["labels"] == ["batterien"]
+
+
+def test_build_add_task_payload_has_no_label_by_default():
+    payload = L.build_add_task_payload(
+        device_id="dev1",
+        device_name="Front door",
+        config_entry_id=CFG,
+        name_template=TMPL,
+    )
+    assert payload["labels"] == []
+
+
+def test_plan_battery_low_creates_task_with_labels():
+    action = L.plan_battery_low(
+        [],
+        device_id="dev1",
+        device_name="Garage",
+        config_entry_id=CFG,
+        name_template=TMPL,
+        labels=["batterien"],
+    )
+    assert isinstance(action, L.CreateTask)
+    assert action.payload["labels"] == ["batterien"]
+
+
+def test_plan_reconcile_labels_created_task():
+    actions = L.plan_reconcile(
+        [],
+        {"brand_new": {"name": "C"}},
+        set(),
+        config_entry_id=CFG,
+        name_template=TMPL,
+        labels=["batterien"],
+    )
+    creates = [a for a in actions if isinstance(a, L.CreateTask)]
+    assert len(creates) == 1
+    assert creates[0].payload["labels"] == ["batterien"]
+
+
+def test_plan_reconcile_no_label_by_default():
+    actions = L.plan_reconcile(
+        [],
+        {"brand_new": {"name": "C"}},
+        set(),
+        config_entry_id=CFG,
+        name_template=TMPL,
+    )
+    creates = [a for a in actions if isinstance(a, L.CreateTask)]
+    assert len(creates) == 1
+    assert creates[0].payload["labels"] == []
