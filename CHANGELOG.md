@@ -12,7 +12,7 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
   Home Assistant labels to every task the integration creates, so battery replacement
   tasks can feed a `label_state` group, be scoped by a dashboard card, or match a
   Home Keeper notification profile without the need for manual labelling
-  the task. Unset (the default) means no labels.
+  the task. Unset (the default) means no labels. (Thanks @bonzenpaule!)
 
 ### Fixed
 

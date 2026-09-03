@@ -25,6 +25,21 @@ GitHub release automatically. No manual `git tag` step.
 On a release PR (before merge) the workflow runs as a **dry run** — it validates the
 version/changelog and builds the zip but does not tag or publish.
 
+## Changelog conventions
+
+Same as [Home Keeper's](https://github.com/prestomation/ha-home-keeper/blob/main/AGENTS.md).
+The two that matter most here:
+
+- **Keep every bullet to three sentences at most.** A bold lead naming the change,
+  then what a user notices, then a caveat or `(Fixes #N)` if one is needed. Detail
+  belongs in `README.md` or the PR body.
+- **Credit an outside contributor in the bullet for their change.** End the bullet
+  with `(Thanks @user!)`, after `(Fixes #N)` if the bullet has one. The credit does
+  not count against the three-sentence budget. Every change that came from a PR by
+  someone outside the project gets one, in the same change that writes the bullet.
+  This repository takes most of its changes from contributors, so the credit is the
+  rule, not the exception.
+
 ## Beta / pre-release releases
 
 Betas go through the *exact same flow* — the only difference is the version string. Use
