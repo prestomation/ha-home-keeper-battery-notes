@@ -91,7 +91,7 @@ class BatteryNotesGlue:
     @property
     def _labels(self) -> list[str]:
         """The optional HA label ids applied to created tasks (empty = none)."""
-        return list(self.entry.options.get(OPT_LABELS, DEFAULT_LABELS))
+        return list(self.entry.options.get(OPT_LABELS) or DEFAULT_LABELS)
 
     @property
     def _two_way(self) -> bool:

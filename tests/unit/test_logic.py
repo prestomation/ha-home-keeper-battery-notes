@@ -414,6 +414,7 @@ def test_reconcile_skips_update_chips_when_type_still_unknown():
 
 # ── labels on the add_task payload ───────────────────────────────────────────
 
+
 def test_build_add_task_payload_includes_label_when_set():
     payload = L.build_add_task_payload(
         device_id="dev1",

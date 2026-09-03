@@ -76,9 +76,18 @@ class BatteryNotesGlueOptionsFlow(OptionsFlow):
                     OPT_NAME_TEMPLATE,
                     default=opts.get(OPT_NAME_TEMPLATE, DEFAULT_NAME_TEMPLATE),
                 ): str,
+                # A cleared label picker submits the form *without* this key, so the
+                # key's `default` is what "cleared" resolves to — it has to be the
+                # empty list, or the labels can never be removed. The current value
+                # therefore pre-fills the picker as a `suggested_value` instead. The
+                # default must also be a list, not a tuple: voluptuous validates it
+                # against `LabelSelector(multiple=True)`, which rejects a tuple.
                 vol.Optional(
                     OPT_LABELS,
-                    default=opts.get(OPT_LABELS, DEFAULT_LABELS),
+                    default=list(DEFAULT_LABELS),
+                    description={
+                        "suggested_value": list(opts.get(OPT_LABELS) or DEFAULT_LABELS)
+                    },
                 ): selector.LabelSelector(selector.LabelSelectorConfig(multiple=True)),
                 vol.Optional(
                     OPT_TWO_WAY,

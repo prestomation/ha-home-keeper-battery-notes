@@ -84,8 +84,11 @@ DEFAULT_SKIP_RECHARGEABLE = True
 # Optional Home Assistant labels applied to every task the integration creates. Empty
 # (the default) means no labels. Picked via a multi-select label selector, so the
 # stored value is a list of Home Assistant *label ids* (slugs), which is what Home
-# Keeper expects on `add_task`.
-DEFAULT_LABELS = ()
+# Keeper expects on `add_task`. An immutable tuple so it can't be mutated in place;
+# every reader copies it into a list, and the options flow *must* hand the selector a
+# list — `LabelSelector(multiple=True)` rejects a tuple, and it validates the default
+# whenever the submitted form omits the key (which is what a cleared picker sends).
+DEFAULT_LABELS: tuple[str, ...] = ()
 # Battery Notes labels a rechargeable device's battery type with this string (from its
 # device library). Matched case-insensitively as a substring so variants still hit.
 RECHARGEABLE_BATTERY_TYPE = "rechargeable"
