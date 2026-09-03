@@ -117,4 +117,13 @@ class BatteryNotesGlueOptionsFlow(OptionsFlow):
                 ): vol.All(vol.Coerce(int), vol.Range(min=1)),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        # The name-template help text has to *show* `{device_name}` to the user, but
+        # Home Assistant reads a translation as an ICU message, so a brace pair it
+        # cannot resolve renders the whole string as "Translation Error: …". Supplying
+        # the literal as an argument is the only escape hatch left: the ICU escape
+        # (single quotes) is rejected by hassfest's translations check.
+        return self.async_show_form(
+            step_id="init",
+            data_schema=schema,
+            description_placeholders={"device_name": "{device_name}"},
+        )

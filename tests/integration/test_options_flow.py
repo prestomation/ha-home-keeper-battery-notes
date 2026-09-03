@@ -44,6 +44,19 @@ async def test_options_form_prefills_the_current_labels(hass: HomeAssistant) -> 
     assert marker.default() == []
 
 
+async def test_options_form_supplies_the_device_name_placeholder(
+    hass: HomeAssistant,
+) -> None:
+    """The help text shows `{device_name}`, which ICU needs supplied as an argument.
+
+    Without it the field renders as "Translation Error: The intl string context
+    variable "device_name" was not provided". Escaping the braces with single quotes
+    instead is rejected by hassfest.
+    """
+    result = await _open_options(hass)
+    assert result["description_placeholders"] == {"device_name": "{device_name}"}
+
+
 async def test_options_flow_saves_selected_labels(hass: HomeAssistant) -> None:
     flow_id = await _open_options_flow_id(hass)
     result = await hass.config_entries.options.async_configure(

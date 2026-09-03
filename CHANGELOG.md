@@ -19,7 +19,7 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
 - **The task name template's help text now reads correctly.** It showed
   "Translation Error: …" instead of the `{device_name}` placeholder, because Home
   Assistant reads a translation as an ICU message and treated the braces as an
-  argument. The braces are now escaped.
+  argument it had no value for. The option page now supplies one.
 
 ## [0.2.1] - 2026-08-17
 
