@@ -435,6 +435,8 @@ class TestCli:
             text=True,
             input=stdin,
             cwd=_ROOT,
+            # Several of these assert on a non-zero exit, so a raise would be wrong.
+            check=False,
         )
 
     def test_notes_prints_the_section(self):
