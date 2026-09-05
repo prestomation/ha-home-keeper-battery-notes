@@ -66,6 +66,20 @@ def test_battery_notes_contract_against_real_source():
             f"Battery Notes no longer references the '{event}' event — update const.py."
         )
 
+    # The reconcile reads the charge level off the "battery plus" sensor, found by its
+    # battery device class (the battery-low binary sensor doesn't carry a level). That
+    # is undocumented Battery Notes surface, so pin it here: rename the sensor or drop
+    # its device class and reconcile-created tasks would quietly lose "was at N%".
+    sensor_text = (_BN_DIR / "sensor.py").read_text(encoding="utf-8")
+    assert 'key="battery_plus"' in sensor_text, (
+        "Battery Notes' battery_plus sensor moved — update const.py "
+        "(BN_BATTERY_LEVEL_DEVICE_CLASS) and wiring._scan_battery_sensors."
+    )
+    assert "SensorDeviceClass.BATTERY" in sensor_text, (
+        "Battery Notes' battery_plus sensor no longer declares the battery device "
+        "class, which is how the reconcile finds it."
+    )
+
 
 def test_low_then_replaced_arms_then_clears_the_task(api):
     base = _count(api)

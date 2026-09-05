@@ -130,13 +130,9 @@ def test_switching_to_replace_converts_the_charge_task(glue):
 
     assert converted["name"] == "Replace battery: E2E valve"
     assert converted["source"]["home_keeper_battery_notes"]["kind"] == "replace"
-    ours = [
-        t
-        for t in glue.tasks()
-        if (t.get("source") or {}).get("home_keeper_battery_notes", {}).get("device_id")
-        == RECHARGEABLE
-    ]
-    assert len(ours) == 1  # converted, not duplicated
+    # Converted, not duplicated. Polled rather than read once: the options change
+    # reloads the entry, so a reconcile is in flight alongside the event we fired.
+    glue.poll_count(RECHARGEABLE, 1, "settled at exactly one task")
 
 
 def test_switching_to_skip_retires_the_task(glue):

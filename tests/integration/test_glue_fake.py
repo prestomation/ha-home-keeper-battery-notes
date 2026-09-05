@@ -836,3 +836,105 @@ async def test_unload_before_start_still_removes_the_listener(
 
     assert glue._cancel_started is None
     assert hass.bus.async_listeners().get(EVENT_HOMEASSISTANT_STARTED, 0) == before
+
+
+async def test_reconcile_ignores_a_non_numeric_battery_level(
+    hass: HomeAssistant,
+) -> None:
+    # unknown/unavailable is not the only thing that isn't a level: an upstream can put
+    # any placeholder in a sensor state. Anything that doesn't parse as a finite number
+    # is no level at all, or the task reads "was at --%".
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+
+    device_id = _make_bn_battery_device(
+        hass, unique="valve4", low="on",
+        attributes={"battery_type": "AA", "battery_quantity": 2}, level="--",
+    )
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["notes"] == "2× AA"
+
+
+async def test_reconcile_takes_the_lowest_of_two_level_sensors(
+    hass: HomeAssistant,
+) -> None:
+    # A device with two battery notes carries two "battery plus" sensors. Report the
+    # lowest — the one a low-battery task is about — rather than whichever the entity
+    # registry happened to yield last, which would differ run to run.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+
+    device_id = _make_bn_battery_device(
+        hass, unique="valve5", low="on",
+        attributes={"battery_type": "AA", "battery_quantity": 2}, level="9",
+    )
+    # Registered second, so "whichever came last" would answer 40 — the healthy pack.
+    second = er.async_get(hass).async_get_or_create(
+        "sensor", BN_DOMAIN, "valve5_second_battery_plus",
+        device_id=device_id, original_device_class="battery",
+    )
+    hass.states.async_set(second.entity_id, "40")
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["notes"] == (
+        "2× AA · was at 9%"
+    )
+
+
+async def test_reconcile_ignores_a_level_sensor_with_no_low_sensor(
+    hass: HomeAssistant,
+) -> None:
+    # Widening the walk past the binary_sensor guard must not make a level sensor a
+    # signal in its own right: only the battery-low sensor says a battery needs
+    # attention, so a device with just a level raises nothing.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+
+    bn_entry = MockConfigEntry(domain=BN_DOMAIN, data={})
+    bn_entry.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=bn_entry.entry_id,
+        identifiers={(BN_DOMAIN, "orphan")},
+        name="Orphan device",
+    )
+    ent = er.async_get(hass).async_get_or_create(
+        "sensor", BN_DOMAIN, "orphan_battery_plus",
+        device_id=device.id, original_device_class="battery",
+    )
+    hass.states.async_set(ent.entity_id, "3")
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=device.id) is None
+
+
+async def test_reconcile_is_idempotent(hass: HomeAssistant) -> None:
+    # Reconcile runs on every start and every options change, so a second pass over
+    # unchanged state must be a no-op — not a second task, and not a re-arm that
+    # rewrites next_due on a task already armed.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+
+    device_id = _make_bn_battery_device(
+        hass, unique="valve6", low="on",
+        attributes={"battery_type": "AA", "battery_quantity": 2}, level="12",
+    )
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+    first = dict(hk.get_task_by_source(DOMAIN, device_id=device_id))
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    ours = [t for t in hk.tasks.values() if (t.get("source") or {}).get(DOMAIN)]
+    assert len(ours) == 1
+    assert ours[0]["id"] == first["id"]
+    assert ours[0]["next_due"] == first["next_due"]
+    assert ours[0]["notes"] == first["notes"]

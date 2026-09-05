@@ -10,15 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    EVENT_HOMEASSISTANT_STARTED,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
-)
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
@@ -73,6 +70,22 @@ from .const import (
 _NOT_REPORTED_SCAN_INTERVAL = timedelta(days=1)
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _as_level(state: str) -> tuple[float, str] | None:
+    """Parse a battery-level state, or ``None`` when it isn't one.
+
+    A silent battery reads ``unknown``/``unavailable``, and nothing stops an upstream
+    from putting some other placeholder there — note one of those as a level and the
+    task would read *"was at unavailable%"*. Anything that isn't a finite number is
+    therefore no level at all. Returns the parsed value (to compare two of them)
+    alongside the original text, so the note reads exactly as the sensor does.
+    """
+    try:
+        value = float(state)
+    except (TypeError, ValueError):
+        return None
+    return (value, state) if math.isfinite(value) else None
 
 
 class BatteryNotesGlue:
@@ -491,7 +504,7 @@ class BatteryNotesGlue:
         low: dict[str, dict[str, Any]] = {}
         recovered: set[str] = set()
         rechargeable: set[str] = set()
-        levels: dict[str, str] = {}
+        levels: dict[str, tuple[float, str]] = {}
         for entity in ent_reg.entities.values():
             if entity.platform != BN_DOMAIN or not entity.device_id:
                 continue
@@ -500,14 +513,18 @@ class BatteryNotesGlue:
             if state is None:
                 continue
             if entity.domain == "sensor":
-                # The "battery plus" sensor: the only place the level is exposed. A
-                # silent battery reports unknown/unavailable, which is not a level —
-                # note it as one and the task would read "was at unavailable%".
-                if device_class == BN_BATTERY_LEVEL_DEVICE_CLASS and state.state not in (
-                    STATE_UNKNOWN,
-                    STATE_UNAVAILABLE,
-                ):
-                    levels[entity.device_id] = state.state
+                # The "battery plus" sensor: the only place the level is exposed.
+                if device_class == BN_BATTERY_LEVEL_DEVICE_CLASS:
+                    parsed = _as_level(state.state)
+                    # A device with two battery notes has two of these. Keep the
+                    # lowest: it's the one worth reporting on a low-battery task, and
+                    # unlike "whichever the registry happened to yield last" it is the
+                    # same answer on every run.
+                    if parsed is not None and (
+                        entity.device_id not in levels
+                        or parsed[0] < levels[entity.device_id][0]
+                    ):
+                        levels[entity.device_id] = parsed
                 continue
             if entity.domain != "binary_sensor":
                 continue
@@ -539,5 +556,6 @@ class BatteryNotesGlue:
         # side of its binary sensor — so fill it in once the walk is done.
         for device_id, info in low.items():
             if info.get("battery_level") in (None, ""):
-                info["battery_level"] = levels.get(device_id)
+                found = levels.get(device_id)
+                info["battery_level"] = found[1] if found else None
         return low, recovered, frozenset(rechargeable)

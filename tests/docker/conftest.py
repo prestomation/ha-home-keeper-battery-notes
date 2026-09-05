@@ -171,6 +171,32 @@ def api(token):
                 time.sleep(1)
             raise AssertionError(f"task for {device_id} never {want} (last={last!r})")
 
+        def glue_task_count(self, device_id: str) -> int:
+            return sum(
+                1
+                for task in self.tasks()
+                if isinstance((task.get("source") or {}).get(GLUE_DOMAIN), dict)
+                and task["source"][GLUE_DOMAIN].get("device_id") == device_id
+            )
+
+        def poll_count(self, device_id: str, want: int, why: str, timeout: float = 25):
+            """Wait for the task count to settle at *want*, then hold it briefly.
+
+            A count can be momentarily right while a delete + add is still in flight,
+            so re-check after a beat rather than trusting the first reading.
+            """
+            deadline = time.monotonic() + timeout
+            last = None
+            while time.monotonic() < deadline:
+                last = self.glue_task_count(device_id)
+                if last == want:
+                    time.sleep(2)
+                    last = self.glue_task_count(device_id)
+                    if last == want:
+                        return
+                time.sleep(1)
+            raise AssertionError(f"{device_id} never {why} (last count={last})")
+
         def delete_glue_task(self, device_id: str) -> None:
             task = self.glue_task(device_id)
             if task is not None:
