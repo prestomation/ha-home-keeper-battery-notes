@@ -94,11 +94,14 @@ a PEP 440 pre-release suffix: `bN` (beta), `aN` (alpha), or `rcN` (e.g. `0.1.0b1
 the final `0.1.0` (with its own `## [0.1.0]` changelog section) when ready.
 
 > This integration requires Home Keeper's `triggered` task type (ha-home-keeper#21),
-> which shipped in Home Keeper's first stable release, **0.3.0**. The `home-keeper`
-> test pin (`requirements-test.txt`) and `ci/fetch-upstreams.sh` `HK_REF` therefore
-> pin the stable **`v0.3.0`** tag. When a future Home Keeper stable bumps an API this
-> glue uses, repin both to the new tag in the same release PR. (Betas before `0.1.0`
-> tracked Home Keeper `main` because no stable yet contained `triggered`.)
+> which shipped in Home Keeper's first stable release, **0.3.0**. Both Home Keeper
+> pins — the `home-keeper` requirement in `requirements-test.txt` and `HK_REF` in
+> `ci/fetch-upstreams.sh` — should name a Home Keeper release tag, so a release of
+> this glue is tested against a Home Keeper a user can install. **Neither does
+> today**: the requirement pins a commit SHA (ha-home-keeper#103) and `HK_REF`
+> defaults to `main`, so CI drifts with Home Keeper's unreleased work. Repin both to
+> the same tag in one PR. (Betas before `0.1.0` tracked Home Keeper `main` because no
+> stable yet contained `triggered`.)
 
 ## Preview releases (test a PR build without merging)
 

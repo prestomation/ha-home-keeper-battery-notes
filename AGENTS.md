@@ -94,7 +94,12 @@ The mechanics are in [RELEASE.md](RELEASE.md). The rules an agent has to apply:
 
 ## Home Keeper pin
 
-This glue needs Home Keeper's `triggered` task type. The `home-keeper` test pin in
-`requirements-test.txt` and `HK_REF` in `ci/fetch-upstreams.sh` point at a stable Home
-Keeper tag. When a future Home Keeper stable changes an API this glue uses, repin both
-in the same release PR.
+This glue needs Home Keeper's `triggered` task type, which first shipped in Home
+Keeper 0.3.0. Two places select the Home Keeper the tests run against: the
+`home-keeper` requirement in `requirements-test.txt` (the fake the integration tier
+uses) and `HK_REF` in `ci/fetch-upstreams.sh` (the real integration the docker tier
+installs). Both should point at a Home Keeper release tag, so a release of this glue
+is tested against a Home Keeper a user can install. Today they do not — the
+requirement pins a commit SHA and `HK_REF` defaults to `main`, so CI drifts with Home
+Keeper's unreleased work. Repin both to the same tag, in one PR, before relying on
+either for a release.
