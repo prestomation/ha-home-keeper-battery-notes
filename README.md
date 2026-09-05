@@ -98,6 +98,17 @@ the device has charged back up.
 Battery Notes identifies these by battery type (*Rechargeable*), so the mode applies to
 every rechargeable it tracks.
 
+![The Rechargeable batteries option, with its three modes](docs/images/rechargeable-1-modes.png)
+
+The result sits beside a disposable's task, told apart by its verb and its chip:
+
+![A charge task and a replace task side by side in the Home Keeper panel](docs/images/rechargeable-2-charge-task.png)
+
+Completing one records a charge, not a replacement — which is what the prompt says, and
+why nothing is pushed back to Battery Notes:
+
+![The charge task's detail page, prompting "Mark battery as charged?"](docs/images/rechargeable-3-charge-prompt.png)
+
 > **Switching between Charge it and Replace it recreates the affected tasks**, which
 > starts their completion history over. A task's name is locked to the managing
 > integration and Home Keeper won't let even us rename it, so the conversion can't be an

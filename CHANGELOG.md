@@ -47,6 +47,11 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
   restart removed an already-removed `homeassistant_started` listener, which Home
   Assistant reported as `Unable to remove unknown job listener` with a traceback. The
   glue was working fine; only the log said otherwise.
+- **The task name template's hint reads as English again.** Home Assistant runs a
+  field's description through a message formatter, which took the `{device_name}` in
+  *"Use {device_name} for the battery's device"* for a variable it was never given and
+  printed a `MISSING_VALUE` error in place of the whole sentence. The braces are
+  escaped now, so the hint says what it always meant to.
 
 ## [0.2.1] - 2026-08-17
 
