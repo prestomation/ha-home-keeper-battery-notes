@@ -14,7 +14,23 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ruff
-      - run: ruff check custom_components tests
+      - run: ruff check custom_components tests ci
+
+  changelog-release-gap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # ci/check-changelog-release-gap.py needs the base branch's history and
+          # every release tag to tell an already-shipped section from one still
+          # being iterated.
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Guard against editing an already-released CHANGELOG section
+        run: python3 ci/check-changelog-release-gap.py
 
   unit:
     runs-on: ubuntu-latest
