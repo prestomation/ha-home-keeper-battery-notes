@@ -4,6 +4,55 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
+## [0.3.0b1] - 2026-08-23
+
+### Added
+
+- **"Charge battery" tasks for rechargeables.** A rechargeable going low means *plug it
+  in*, not *replace the battery* — and for a radiator valve or a smart lock that's a real
+  recurring chore. The **Rechargeable batteries** option now offers three answers:
+  **Charge it** raises a *"Charge battery: …"* task (its own name template, a charging
+  chip icon and a *"Mark battery as charged?"* prompt), **Ignore them** raises nothing
+  (still the default), and **Replace it** treats the battery like a disposable. A charge
+  task arms on every drain and clears on every charge, so its completions accumulate into
+  a charging log on one persistent task. Completing one is deliberately **not** mirrored
+  to Battery Notes: you charged the battery, you didn't change it, and stamping a
+  replacement date would falsify the device's replacement history. (Fixes #18)
+
+### Changed
+
+- **The *Skip rechargeable batteries* switch became the *Rechargeable batteries*
+  choice.** Existing setups keep behaving as configured with nothing to do: the switch
+  **on** is the *Ignore them* default, and **off** — which used to mean a rechargeable got
+  a replace task — becomes *Charge it*, the task it should have been raising all along.
+  Setups that really do want the replacement task can pick *Replace it*.
+- **Rechargeable tasks of the wrong kind are converted on the next reconcile.** Home
+  Keeper locks a managed task's name against every edit, the owning integration's
+  included, so a *"Replace battery: …"* task cannot be renamed into a
+  *"Charge battery: …"* one — it is removed and re-created instead. **That device's
+  completion history starts over**, and so do the task's device-page entity ids
+  (`…_replace_battery_…` becomes `…_charge_battery_…`), so update any automation or
+  dashboard card pointing at one. Only rechargeables are affected; disposable-cell
+  tasks are never touched.
+
+### Fixed
+
+- **A task created by a reconcile records the battery level again.** Battery Notes
+  keeps the charge level on its "battery plus" sensor, not on the battery-low sensor
+  the reconcile read, so a task it created was noted *"1× AAA"* where a task from a
+  live event said *"1× AAA · was at 8%"*. It now reads both. This shows up far more
+  often with rechargeable modes, since every switch between them recreates tasks
+  through that path.
+- **Changing an option no longer logs an error.** The first options change after a
+  restart removed an already-removed `homeassistant_started` listener, which Home
+  Assistant reported as `Unable to remove unknown job listener` with a traceback. The
+  glue was working fine; only the log said otherwise.
+- **The task name template's hint reads as English again.** Home Assistant runs a
+  field's description through a message formatter, which took the `{device_name}` in
+  *"Use {device_name} for the battery's device"* for a variable it was never given and
+  printed a `MISSING_VALUE` error in place of the whole sentence. The options form
+  supplies it now, so the hint says what it always meant to.
+
 ## [0.2.1] - 2026-08-17
 
 ### Fixed

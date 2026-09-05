@@ -20,6 +20,9 @@ mobile app, and is recorded when you do it.
 
 - **Battery goes low** → a Home Keeper **"Replace battery: …"** task becomes **due now**
   on the same device, with a *"Managed by Battery Notes"* chip.
+- **Rechargeable?** → it can raise a **"Charge battery: …"** task instead, for the
+  devices you top up rather than re-cell (radiator valves, smart locks). See
+  [Rechargeable batteries](#rechargeable-batteries).
 - **You replace it, from either side** → the two stay in sync (check the task off in Home
   Keeper, or press Battery Notes' *Battery Replaced* button / let the level recover).
 - **Between low events the task is dormant** — it leaves the to-do list and calendar and
@@ -43,7 +46,7 @@ guards), so nothing breaks if one is missing.
 | `battery_notes_battery_threshold` `battery_low: true` | create the task (born armed) if new, else `home_keeper.trigger_task` to re-arm |
 | `battery_notes_battery_threshold` `battery_low: false` | `home_keeper.complete_task` (records the replacement, goes dormant) |
 | `battery_notes_battery_replaced` | `home_keeper.complete_task` (idempotent) |
-| `home_keeper_task_completed` (ours) | `battery_notes.set_battery_replaced` (two-way), with an `origin` guard so it never loops |
+| `home_keeper_task_completed` (ours) | `battery_notes.set_battery_replaced` (two-way), with an `origin` guard so it never loops — skipped for charge tasks, which aren't replacements |
 
 The glue is **stateless**: it re-derives everything from `home_keeper.list_tasks` (matched
 by its `source` namespace) and Battery Notes' registry entities, and reconciles once on
@@ -65,22 +68,54 @@ this bridge to anyone who has Battery Notes installed but hasn't added it yet.
 - **Task name template** — default `Replace battery: {device_name}`.
 - **Two-way sync** — completing in Home Keeper marks the battery replaced in Battery Notes (default on).
 - **Clear on recovery** — clear the task if a battery's level recovers on its own (default on).
-- **Skip rechargeable batteries** — don't raise replace-battery tasks for rechargeables (default **on**; see below).
+- **Rechargeable batteries** — charge them, ignore them, or replace them (default **ignore**; see below).
+- **Charge task name template** — default `Charge battery: {device_name}`.
 - **Flag batteries that stop reporting** — also flag a battery that's gone silent (default **off**; see below).
 - **Days with no report before flagging** — staleness threshold for the option above (default `3`).
 
 ## Rechargeable batteries
 
-A phone or watch hitting a low charge means *plug it in*, not *replace the battery* — the
-"low → replace" model is for **disposable** cells. A rechargeable cycles low→full
-constantly, so a task for one churns forever (re-armed on every drain, cleared on every
-charge) and logs phantom replacements; the only thing that would justify replacing it,
-capacity degradation, is something Battery Notes can't see.
+A rechargeable hitting a low charge means *plug it in*, not *replace the battery* — the
+"low → replace" model is for **disposable** cells. But whether that's worth a task depends
+entirely on the device, so **Rechargeable batteries** offers three answers:
 
-So **Skip rechargeable batteries** is **on by default**: a rechargeable (battery type
-*Rechargeable*) going low or non-reporting raises no task, and a reconcile retires any
-existing one — even after it's charged back up. Turn it off to track rechargeable
-replacements by hand.
+| Mode | What a low rechargeable gets | Good for |
+|---|---|---|
+| **Charge it** | a **"Charge battery: …"** task, due now | a radiator valve, a smart lock — a pack you top up as a *chore*, on a cadence worth recording |
+| **Ignore them** (default) | nothing | a phone or watch you charge without being told, where a task would just be noise |
+| **Replace it** | a **"Replace battery: …"** task | tracking rechargeable *replacements* by hand |
+
+**Charge it** leans into the churn that makes a replace task wrong: the task arms on every
+drain and clears on every charge, and those completions accumulate into a charging log on
+one persistent task. Completing it is **not** mirrored to Battery Notes — you charged the
+battery, you didn't change it, so stamping a replacement date would falsify the device's
+real replacement history.
+
+**Ignore them** stays the default, so nothing starts appearing for devices you never asked
+about. It also *retires* an existing rechargeable task on the next reconcile — even after
+the device has charged back up.
+
+Battery Notes identifies these by battery type (*Rechargeable*), so the mode applies to
+every rechargeable it tracks.
+
+![The Rechargeable batteries option, with its three modes](docs/images/rechargeable-1-modes.png)
+
+The result sits beside a disposable's task, told apart by its verb and its chip:
+
+![A charge task and a replace task side by side in the Home Keeper panel](docs/images/rechargeable-2-charge-task.png)
+
+Completing one records a charge, not a replacement — which is what the prompt says, and
+why nothing is pushed back to Battery Notes:
+
+![The charge task's detail page, prompting "Mark battery as charged?"](docs/images/rechargeable-3-charge-prompt.png)
+
+> **Switching between Charge it and Replace it recreates the affected tasks**, which
+> starts their completion history over. A task's name is locked to the managing
+> integration and Home Keeper won't let even us rename it, so the conversion can't be an
+> edit. It also renames the task's device-page entities — a `Replace battery: Hallway
+> Lock` task's `button.hallway_lock_replace_battery_hallway_lock_mark_done` becomes
+> `…_charge_battery_…` — so update any automation or dashboard card that points at one.
+> Only rechargeables are touched; disposable-cell tasks are never affected.
 
 ## Dead / non-reporting batteries
 

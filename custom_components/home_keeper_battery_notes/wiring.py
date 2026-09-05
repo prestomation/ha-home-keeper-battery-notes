@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -23,6 +24,7 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from . import logic
 from .const import (
+    BN_BATTERY_LEVEL_DEVICE_CLASS,
     BN_BATTERY_LOW_DEVICE_CLASS,
     BN_DOMAIN,
     BN_EVENT_NOT_REPORTED,
@@ -32,10 +34,10 @@ from .const import (
     BN_FIELD_RAISE_EVENTS,
     BN_SERVICE_CHECK_LAST_REPORTED,
     BN_SERVICE_SET_REPLACED,
+    DEFAULT_CHARGE_NAME_TEMPLATE,
     DEFAULT_CLEAR_ON_RECOVERY,
     DEFAULT_NAME_TEMPLATE,
     DEFAULT_NOT_REPORTED_DAYS,
-    DEFAULT_SKIP_RECHARGEABLE,
     DEFAULT_TREAT_NOT_REPORTED,
     DEFAULT_TWO_WAY,
     DOMAIN,
@@ -50,10 +52,11 @@ from .const import (
     HK_EVENT_REGISTER_COMPANIONS,
     HK_EVENT_TASK_COMPLETED,
     HK_SERVICE_REGISTER_COMPANION,
+    KIND_CHARGE,
+    OPT_CHARGE_NAME_TEMPLATE,
     OPT_CLEAR_ON_RECOVERY,
     OPT_NAME_TEMPLATE,
     OPT_NOT_REPORTED_DAYS,
-    OPT_SKIP_RECHARGEABLE,
     OPT_TREAT_NOT_REPORTED,
     OPT_TWO_WAY,
     ORIGIN,
@@ -69,6 +72,22 @@ _NOT_REPORTED_SCAN_INTERVAL = timedelta(days=1)
 _LOGGER = logging.getLogger(__name__)
 
 
+def _as_level(state: str) -> tuple[float, str] | None:
+    """Parse a battery-level state, or ``None`` when it isn't one.
+
+    A silent battery reads ``unknown``/``unavailable``, and nothing stops an upstream
+    from putting some other placeholder there — note one of those as a level and the
+    task would read *"was at unavailable%"*. Anything that isn't a finite number is
+    therefore no level at all. Returns the parsed value (to compare two of them)
+    alongside the original text, so the note reads exactly as the sensor does.
+    """
+    try:
+        value = float(state)
+    except (TypeError, ValueError):
+        return None
+    return (value, state) if math.isfinite(value) else None
+
+
 class BatteryNotesGlue:
     """Listens to Battery Notes and drives Home Keeper triggered tasks."""
 
@@ -80,6 +99,8 @@ class BatteryNotesGlue:
         # task list and each create a task. The glue is stateless, so this lock is
         # the only thing preventing a create/create interleave.
         self._lock = asyncio.Lock()
+        # Set while we're waiting for HA to finish starting; see _cancel_start_listener.
+        self._cancel_started: CALLBACK_TYPE | None = None
 
     # ── options ──────────────────────────────────────────────────────────────
     @property
@@ -107,9 +128,13 @@ class BatteryNotesGlue:
         )
 
     @property
-    def _skip_rechargeable(self) -> bool:
+    def _rechargeable_mode(self) -> str:
+        return logic.resolve_rechargeable_mode(self.entry.options)
+
+    @property
+    def _charge_name_template(self) -> str:
         return self.entry.options.get(
-            OPT_SKIP_RECHARGEABLE, DEFAULT_SKIP_RECHARGEABLE
+            OPT_CHARGE_NAME_TEMPLATE, DEFAULT_CHARGE_NAME_TEMPLATE
         )
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -157,13 +182,26 @@ class BatteryNotesGlue:
             await self._reconcile()
             await self._check_not_reported()
         else:
-            self.entry.async_on_unload(
-                self.hass.bus.async_listen_once(
-                    EVENT_HOMEASSISTANT_STARTED, self._on_started
-                )
+            self._cancel_started = self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STARTED, self._on_started
             )
+            self.entry.async_on_unload(self._cancel_start_listener)
+
+    @callback
+    def _cancel_start_listener(self) -> None:
+        """Drop the HA-started listener, but only while it is still registered.
+
+        ``async_listen_once`` removes its own listener when the event fires, so handing
+        its canceller straight to ``async_on_unload`` makes the next unload — the first
+        options change after a restart — remove it a second time, which Home Assistant
+        logs as an ``Unable to remove unknown job listener`` error with a traceback.
+        """
+        if self._cancel_started is not None:
+            self._cancel_started()
+            self._cancel_started = None
 
     async def _on_started(self, _event: Event) -> None:
+        self._cancel_started = None  # fired, so Home Assistant has already removed it
         await self._reconcile()
         await self._check_not_reported()
 
@@ -184,7 +222,8 @@ class BatteryNotesGlue:
                     "icon": "mdi:battery-alert-variant-outline",
                     "description": (
                         "Turns Battery Notes low-battery alerts into Home Keeper "
-                        "“replace battery” tasks, kept in sync both ways."
+                        "“replace battery” (or “charge battery”) tasks, kept in "
+                        "sync both ways."
                     ),
                     "config_entry_id": self.entry.entry_id,
                     "docs_url": (
@@ -242,6 +281,25 @@ class BatteryNotesGlue:
                     blocking=True,
                 )
                 _LOGGER.debug("Deleted battery task %s", action.task_id)
+        elif isinstance(action, logic.RecreateTask):
+            # Delete then add: the task's name is locked, and Home Keeper strips locked
+            # fields from every update_task payload, so a kind change can't be a rename.
+            if self._hk_ready("delete_task") and self._hk_ready("add_task"):
+                await self.hass.services.async_call(
+                    HK_DOMAIN,
+                    "delete_task",
+                    {"task_id": action.task_id, "force": True},
+                    blocking=True,
+                )
+                await self.hass.services.async_call(
+                    HK_DOMAIN, "add_task", action.payload, blocking=True
+                )
+                _LOGGER.debug(
+                    "Recreated battery task %s for device %s as a %s task",
+                    action.task_id,
+                    action.device_id,
+                    action.payload["source"][SOURCE_NS]["kind"],
+                )
         elif isinstance(action, logic.UpdateChips) and self._hk_ready("update_task"):
             await self.hass.services.async_call(
                 HK_DOMAIN,
@@ -269,7 +327,8 @@ class BatteryNotesGlue:
                     battery_type=data.get(FIELD_BATTERY_TYPE),
                     battery_quantity=data.get(FIELD_BATTERY_QUANTITY),
                     battery_level=data.get(FIELD_BATTERY_LEVEL),
-                    skip_rechargeable=self._skip_rechargeable,
+                    charge_name_template=self._charge_name_template,
+                    rechargeable_mode=self._rechargeable_mode,
                 )
             elif self._clear_on_recovery:
                 action = logic.plan_battery_cleared(tasks, device_id=device_id)
@@ -312,7 +371,8 @@ class BatteryNotesGlue:
                 battery_quantity=event.data.get(FIELD_BATTERY_QUANTITY),
                 reason="not_reported",
                 last_reported_days=event.data.get(FIELD_LAST_REPORTED_DAYS),
-                skip_rechargeable=self._skip_rechargeable,
+                charge_name_template=self._charge_name_template,
+                rechargeable_mode=self._rechargeable_mode,
             )
             if action is not None:
                 await self._execute(action)
@@ -351,6 +411,11 @@ class BatteryNotesGlue:
         We just push "replaced" to Battery Notes — Home Keeper has already recorded the
         completion and set the task dormant, so we must not re-complete or re-arm
         (that would loop). See Home Keeper INTEGRATING.md §4.
+
+        A *charge* task is never mirrored: the user plugged the device in, they did not
+        change the cell, and Battery Notes has no "charged" to record — pushing
+        set_battery_replaced would stamp a replacement date that never happened and
+        falsify the device's replacement history.
         """
         if not self._two_way:
             return
@@ -359,6 +424,8 @@ class BatteryNotesGlue:
         src = (event.data.get("source") or {}).get(SOURCE_NS)
         if not isinstance(src, dict):
             return  # not one of our tasks
+        if src.get("kind") == KIND_CHARGE:
+            return  # charged, not replaced — nothing to tell Battery Notes
         device_id = src.get("device_id")
         if not device_id:
             return
@@ -400,7 +467,8 @@ class BatteryNotesGlue:
                 recovered_devices,
                 config_entry_id=self.entry.entry_id,
                 name_template=self._name_template,
-                skip_rechargeable=self._skip_rechargeable,
+                charge_name_template=self._charge_name_template,
+                rechargeable_mode=self._rechargeable_mode,
                 rechargeable_devices=rechargeable_devices,
             )
             for action in actions:
@@ -426,21 +494,41 @@ class BatteryNotesGlue:
         ``unknown``/``unavailable`` (or absent) lands in neither *low* nor *recovered*:
         that's the suspected-dead case, so we neither arm from it here (the
         not-reported path, with its day threshold, handles that) nor clear on it.
+
+        Battery Notes splits the information across two entities, so we walk both: the
+        battery-low *binary sensor* carries type/quantity, and the "battery plus"
+        *sensor* on the same device carries the charge level.
         """
         ent_reg = er.async_get(self.hass)
         dev_reg = dr.async_get(self.hass)
         low: dict[str, dict[str, Any]] = {}
         recovered: set[str] = set()
         rechargeable: set[str] = set()
+        levels: dict[str, tuple[float, str]] = {}
         for entity in ent_reg.entities.values():
-            if entity.platform != BN_DOMAIN or entity.domain != "binary_sensor":
+            if entity.platform != BN_DOMAIN or not entity.device_id:
                 continue
-            if (entity.device_class or entity.original_device_class) != BN_BATTERY_LOW_DEVICE_CLASS:
-                continue
-            if not entity.device_id:
-                continue
+            device_class = entity.device_class or entity.original_device_class
             state = self.hass.states.get(entity.entity_id)
             if state is None:
+                continue
+            if entity.domain == "sensor":
+                # The "battery plus" sensor: the only place the level is exposed.
+                if device_class == BN_BATTERY_LEVEL_DEVICE_CLASS:
+                    parsed = _as_level(state.state)
+                    # A device with two battery notes has two of these. Keep the
+                    # lowest: it's the one worth reporting on a low-battery task, and
+                    # unlike "whichever the registry happened to yield last" it is the
+                    # same answer on every run.
+                    if parsed is not None and (
+                        entity.device_id not in levels
+                        or parsed[0] < levels[entity.device_id][0]
+                    ):
+                        levels[entity.device_id] = parsed
+                continue
+            if entity.domain != "binary_sensor":
+                continue
+            if device_class != BN_BATTERY_LOW_DEVICE_CLASS:
                 continue
             # Battery Notes carries battery_type as an attribute regardless of the
             # low sensor's on/off/unknown state, so we can classify rechargeables even
@@ -454,7 +542,7 @@ class BatteryNotesGlue:
                 continue
             device = dev_reg.async_get(entity.device_id)
             name = (device.name_by_user or device.name) if device else None
-            # Battery Notes exposes battery_type/quantity/level as attributes on the
+            # Battery Notes exposes battery_type/quantity as attributes on the
             # battery-low sensor, so a reconcile-created task gets the same notes as
             # one created from a live event (rather than an empty note).
             attrs = state.attributes
@@ -464,4 +552,10 @@ class BatteryNotesGlue:
                 "battery_quantity": attrs.get(FIELD_BATTERY_QUANTITY),
                 "battery_level": attrs.get(FIELD_BATTERY_LEVEL),
             }
+        # The level lives on the sibling sensor, which the registry may hand us either
+        # side of its binary sensor — so fill it in once the walk is done.
+        for device_id, info in low.items():
+            if info.get("battery_level") in (None, ""):
+                found = levels.get(device_id)
+                info["battery_level"] = found[1] if found else None
         return low, recovered, frozenset(rechargeable)

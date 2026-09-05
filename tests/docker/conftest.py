@@ -15,6 +15,8 @@ import requests
 HA_URL = "http://localhost:8123"
 CLIENT_ID = f"{HA_URL}/"
 STARTUP_TIMEOUT = 180
+# This glue's domain — also the namespace it stamps into a task's ``source``.
+GLUE_DOMAIN = "home_keeper_battery_notes"
 
 
 def _wait_for_ha() -> None:
@@ -121,5 +123,134 @@ def api(token):
             raise AssertionError(
                 f"{entity_id} did not reach {want!r} (last={last!r})"
             )
+
+        # ── services ─────────────────────────────────────────────────────────
+        def call(
+            self, domain: str, service: str, data: dict | None = None, *, response=False
+        ):
+            """Call a service, optionally returning its response payload."""
+            query = "?return_response" if response else ""
+            r = requests.post(
+                f"{HA_URL}/api/services/{domain}/{service}{query}",
+                headers=self.headers,
+                json=data or {},
+                timeout=30,
+            )
+            r.raise_for_status()
+            return r.json() if r.text else None
+
+        def tasks(self) -> list[dict]:
+            """Every Home Keeper task. Retries: a reload briefly 400s the service."""
+            last: Exception | None = None
+            for _ in range(10):
+                try:
+                    out = self.call("home_keeper", "list_tasks", response=True)
+                    return list(out["service_response"]["tasks"])
+                except requests.HTTPError as err:
+                    last = err
+                    time.sleep(1)
+            raise AssertionError(f"home_keeper.list_tasks never succeeded: {last}")
+
+        def glue_task(self, device_id: str) -> dict | None:
+            """The glue's task for *device_id*, matched by its source namespace."""
+            for task in self.tasks():
+                src = (task.get("source") or {}).get(GLUE_DOMAIN)
+                if isinstance(src, dict) and src.get("device_id") == device_id:
+                    return task
+            return None
+
+        def poll_glue_task(
+            self, device_id: str, predicate, want: str, timeout: float = 25
+        ) -> dict:
+            deadline = time.monotonic() + timeout
+            last = None
+            while time.monotonic() < deadline:
+                last = self.glue_task(device_id)
+                if predicate(last):
+                    return last
+                time.sleep(1)
+            raise AssertionError(f"task for {device_id} never {want} (last={last!r})")
+
+        def glue_task_count(self, device_id: str) -> int:
+            return sum(
+                1
+                for task in self.tasks()
+                if isinstance((task.get("source") or {}).get(GLUE_DOMAIN), dict)
+                and task["source"][GLUE_DOMAIN].get("device_id") == device_id
+            )
+
+        def poll_count(self, device_id: str, want: int, why: str, timeout: float = 25):
+            """Wait for the task count to settle at *want*, then hold it briefly.
+
+            A count can be momentarily right while a delete + add is still in flight,
+            so re-check after a beat rather than trusting the first reading.
+            """
+            deadline = time.monotonic() + timeout
+            last = None
+            while time.monotonic() < deadline:
+                last = self.glue_task_count(device_id)
+                if last == want:
+                    time.sleep(2)
+                    last = self.glue_task_count(device_id)
+                    if last == want:
+                        return
+                time.sleep(1)
+            raise AssertionError(f"{device_id} never {why} (last count={last})")
+
+        def delete_glue_task(self, device_id: str) -> None:
+            task = self.glue_task(device_id)
+            if task is not None:
+                # force: our tasks are deletion-protected while the entry resolves.
+                self.call(
+                    "home_keeper",
+                    "delete_task",
+                    {"task_id": task["id"], "force": True},
+                )
+
+        # ── options ──────────────────────────────────────────────────────────
+        def glue_entry_id(self) -> str:
+            r = requests.get(
+                f"{HA_URL}/api/config/config_entries/entry",
+                headers=self.headers,
+                timeout=10,
+            )
+            r.raise_for_status()
+            for entry in r.json():
+                if entry["domain"] == GLUE_DOMAIN:
+                    return entry["entry_id"]
+            raise AssertionError(f"no {GLUE_DOMAIN} config entry in the container")
+
+        def set_options(self, **overrides) -> None:
+            """Drive the real options flow, submitting the form the UI would.
+
+            Starts from the schema's own defaults so every field round-trips, then
+            applies *overrides* — the same shape as a user editing one control.
+            """
+            entry_id = self.glue_entry_id()
+            r = requests.post(
+                f"{HA_URL}/api/config/config_entries/options/flow",
+                headers=self.headers,
+                json={"handler": entry_id},
+                timeout=20,
+            )
+            r.raise_for_status()
+            flow = r.json()
+            assert flow["type"] == "form", flow
+            data = {
+                field["name"]: field["default"]
+                for field in flow["data_schema"]
+                if "default" in field
+            }
+            data.update(overrides)
+            r = requests.post(
+                f"{HA_URL}/api/config/config_entries/options/flow/{flow['flow_id']}",
+                headers=self.headers,
+                json=data,
+                timeout=20,
+            )
+            r.raise_for_status()
+            assert r.json()["type"] == "create_entry", r.text
+            # Saving reloads the entry; wait until it is serving again.
+            self.tasks()
 
     return _Api()
