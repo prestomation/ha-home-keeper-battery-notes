@@ -50,8 +50,8 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
 - **The task name template's hint reads as English again.** Home Assistant runs a
   field's description through a message formatter, which took the `{device_name}` in
   *"Use {device_name} for the battery's device"* for a variable it was never given and
-  printed a `MISSING_VALUE` error in place of the whole sentence. The braces are
-  escaped now, so the hint says what it always meant to.
+  printed a `MISSING_VALUE` error in place of the whole sentence. The options form
+  supplies it now, so the hint says what it always meant to.
 
 ## [0.2.1] - 2026-08-17
 

@@ -122,4 +122,14 @@ class BatteryNotesGlueOptionsFlow(OptionsFlow):
                 ): vol.All(vol.Coerce(int), vol.Range(min=1)),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=schema,
+            # The two template fields' descriptions name the token to type,
+            # ``{device_name}``. Home Assistant renders a description through a message
+            # formatter, which reads that as a variable and — given none — replaces the
+            # whole sentence with a MISSING_VALUE error. Supplying it as a real
+            # placeholder whose value is the literal text is how Home Assistant expects
+            # this to be done; escaping the braces instead is what hassfest rejects.
+            description_placeholders={"device_name": "{device_name}"},
+        )
