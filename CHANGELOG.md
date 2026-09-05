@@ -30,8 +30,23 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
   Keeper locks a managed task's name against every edit, the owning integration's
   included, so a *"Replace battery: …"* task cannot be renamed into a
   *"Charge battery: …"* one — it is removed and re-created instead. **That device's
-  completion history starts over**, and the same applies when switching modes later.
-  Only rechargeables are affected; disposable-cell tasks are never touched.
+  completion history starts over**, and so do the task's device-page entity ids
+  (`…_replace_battery_…` becomes `…_charge_battery_…`), so update any automation or
+  dashboard card pointing at one. Only rechargeables are affected; disposable-cell
+  tasks are never touched.
+
+### Fixed
+
+- **A task created by a reconcile records the battery level again.** Battery Notes
+  keeps the charge level on its "battery plus" sensor, not on the battery-low sensor
+  the reconcile read, so a task it created was noted *"1× AAA"* where a task from a
+  live event said *"1× AAA · was at 8%"*. It now reads both. This shows up far more
+  often with rechargeable modes, since every switch between them recreates tasks
+  through that path.
+- **Changing an option no longer logs an error.** The first options change after a
+  restart removed an already-removed `homeassistant_started` listener, which Home
+  Assistant reported as `Unable to remove unknown job listener` with a traceback. The
+  glue was working fine; only the log said otherwise.
 
 ## [0.2.1] - 2026-08-17
 

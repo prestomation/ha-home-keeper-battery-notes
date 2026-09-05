@@ -14,8 +14,12 @@ from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.const import (
+    EVENT_HOMEASSISTANT_STARTED,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -23,6 +27,7 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from . import logic
 from .const import (
+    BN_BATTERY_LEVEL_DEVICE_CLASS,
     BN_BATTERY_LOW_DEVICE_CLASS,
     BN_DOMAIN,
     BN_EVENT_NOT_REPORTED,
@@ -81,6 +86,8 @@ class BatteryNotesGlue:
         # task list and each create a task. The glue is stateless, so this lock is
         # the only thing preventing a create/create interleave.
         self._lock = asyncio.Lock()
+        # Set while we're waiting for HA to finish starting; see _cancel_start_listener.
+        self._cancel_started: CALLBACK_TYPE | None = None
 
     # ── options ──────────────────────────────────────────────────────────────
     @property
@@ -162,13 +169,26 @@ class BatteryNotesGlue:
             await self._reconcile()
             await self._check_not_reported()
         else:
-            self.entry.async_on_unload(
-                self.hass.bus.async_listen_once(
-                    EVENT_HOMEASSISTANT_STARTED, self._on_started
-                )
+            self._cancel_started = self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STARTED, self._on_started
             )
+            self.entry.async_on_unload(self._cancel_start_listener)
+
+    @callback
+    def _cancel_start_listener(self) -> None:
+        """Drop the HA-started listener, but only while it is still registered.
+
+        ``async_listen_once`` removes its own listener when the event fires, so handing
+        its canceller straight to ``async_on_unload`` makes the next unload — the first
+        options change after a restart — remove it a second time, which Home Assistant
+        logs as an ``Unable to remove unknown job listener`` error with a traceback.
+        """
+        if self._cancel_started is not None:
+            self._cancel_started()
+            self._cancel_started = None
 
     async def _on_started(self, _event: Event) -> None:
+        self._cancel_started = None  # fired, so Home Assistant has already removed it
         await self._reconcile()
         await self._check_not_reported()
 
@@ -461,21 +481,37 @@ class BatteryNotesGlue:
         ``unknown``/``unavailable`` (or absent) lands in neither *low* nor *recovered*:
         that's the suspected-dead case, so we neither arm from it here (the
         not-reported path, with its day threshold, handles that) nor clear on it.
+
+        Battery Notes splits the information across two entities, so we walk both: the
+        battery-low *binary sensor* carries type/quantity, and the "battery plus"
+        *sensor* on the same device carries the charge level.
         """
         ent_reg = er.async_get(self.hass)
         dev_reg = dr.async_get(self.hass)
         low: dict[str, dict[str, Any]] = {}
         recovered: set[str] = set()
         rechargeable: set[str] = set()
+        levels: dict[str, str] = {}
         for entity in ent_reg.entities.values():
-            if entity.platform != BN_DOMAIN or entity.domain != "binary_sensor":
+            if entity.platform != BN_DOMAIN or not entity.device_id:
                 continue
-            if (entity.device_class or entity.original_device_class) != BN_BATTERY_LOW_DEVICE_CLASS:
-                continue
-            if not entity.device_id:
-                continue
+            device_class = entity.device_class or entity.original_device_class
             state = self.hass.states.get(entity.entity_id)
             if state is None:
+                continue
+            if entity.domain == "sensor":
+                # The "battery plus" sensor: the only place the level is exposed. A
+                # silent battery reports unknown/unavailable, which is not a level —
+                # note it as one and the task would read "was at unavailable%".
+                if device_class == BN_BATTERY_LEVEL_DEVICE_CLASS and state.state not in (
+                    STATE_UNKNOWN,
+                    STATE_UNAVAILABLE,
+                ):
+                    levels[entity.device_id] = state.state
+                continue
+            if entity.domain != "binary_sensor":
+                continue
+            if device_class != BN_BATTERY_LOW_DEVICE_CLASS:
                 continue
             # Battery Notes carries battery_type as an attribute regardless of the
             # low sensor's on/off/unknown state, so we can classify rechargeables even
@@ -489,7 +525,7 @@ class BatteryNotesGlue:
                 continue
             device = dev_reg.async_get(entity.device_id)
             name = (device.name_by_user or device.name) if device else None
-            # Battery Notes exposes battery_type/quantity/level as attributes on the
+            # Battery Notes exposes battery_type/quantity as attributes on the
             # battery-low sensor, so a reconcile-created task gets the same notes as
             # one created from a live event (rather than an empty note).
             attrs = state.attributes
@@ -499,4 +535,9 @@ class BatteryNotesGlue:
                 "battery_quantity": attrs.get(FIELD_BATTERY_QUANTITY),
                 "battery_level": attrs.get(FIELD_BATTERY_LEVEL),
             }
+        # The level lives on the sibling sensor, which the registry may hand us either
+        # side of its binary sensor — so fill it in once the walk is done.
+        for device_id, info in low.items():
+            if info.get("battery_level") in (None, ""):
+                info["battery_level"] = levels.get(device_id)
         return low, recovered, frozenset(rechargeable)

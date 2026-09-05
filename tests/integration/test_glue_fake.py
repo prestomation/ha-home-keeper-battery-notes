@@ -9,7 +9,8 @@ sync. They need a real HA test environment (pytest-homeassistant-custom-componen
 from __future__ import annotations
 
 import pytest
-from homeassistant.core import HomeAssistant, SupportsResponse
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CoreState, HomeAssistant, SupportsResponse
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -700,3 +701,138 @@ async def test_options_flow_opens_on_the_migrated_legacy_mode(
         if key.schema == OPT_RECHARGEABLE_MODE
     )
     assert default == "charge"
+
+def _make_bn_battery_device(
+    hass: HomeAssistant,
+    *,
+    unique: str,
+    low: str,
+    attributes: dict | None = None,
+    level: str | None = None,
+) -> str:
+    """Register a full Battery Notes device: low binary sensor + level sensor.
+
+    Mirrors how Battery Notes really splits a battery across two entities — the
+    battery-low binary sensor carries type/quantity, the "battery plus" sensor carries
+    the charge level. Returns the device id.
+    """
+    bn_entry = MockConfigEntry(domain=BN_DOMAIN, data={})
+    bn_entry.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=bn_entry.entry_id,
+        identifiers={(BN_DOMAIN, unique)},
+        name=f"{unique} device",
+    )
+    low_ent = er.async_get(hass).async_get_or_create(
+        "binary_sensor", BN_DOMAIN, f"{unique}_low",
+        device_id=device.id, original_device_class="battery",
+    )
+    hass.states.async_set(low_ent.entity_id, low, attributes or {})
+    if level is not None:
+        level_ent = er.async_get(hass).async_get_or_create(
+            "sensor", BN_DOMAIN, f"{unique}_battery_plus",
+            device_id=device.id, original_device_class="battery",
+        )
+        hass.states.async_set(level_ent.entity_id, level)
+    return device.id
+
+
+async def test_reconcile_reads_the_level_from_the_battery_plus_sensor(
+    hass: HomeAssistant,
+) -> None:
+    # Battery Notes splits the battery across two entities: type/quantity sit on the
+    # battery-low binary sensor, but the *level* only exists on the "battery plus"
+    # sensor. Read only the first and a reconcile-created task silently loses the
+    # "was at N%" note that a task created from a live event records — which every
+    # rechargeable-mode switch now goes through.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+
+    device_id = _make_bn_battery_device(
+        hass, unique="valve2", low="on",
+        attributes={"battery_type": "AA", "battery_quantity": 2}, level="17",
+    )
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert task is not None
+    assert task["notes"] == "2× AA · was at 17%"
+
+
+async def test_reconcile_omits_an_unavailable_battery_level(
+    hass: HomeAssistant,
+) -> None:
+    # An unknown/unavailable level sensor must not leak "was at unavailable%" into the
+    # notes — the rest of the description still stands on its own.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_RECHARGEABLE_MODE: "charge"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    device_id = _make_bn_battery_device(
+        hass, unique="valve3", low="on",
+        attributes={"battery_type": "Rechargeable", "battery_quantity": 1},
+        level="unavailable",
+    )
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert task is not None
+    assert task["notes"] == "1× Rechargeable"
+
+
+async def test_unload_after_start_does_not_double_remove_the_listener(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Setting up before HA has started registers a one-shot homeassistant_started
+    # listener, which Home Assistant removes itself once it fires. Handing its canceller
+    # straight to async_on_unload made the next unload — the first options change after
+    # a restart — remove it a second time, logging an error with a traceback.
+    await async_setup_fake_home_keeper(hass)
+    hass.set_state(CoreState.not_running)
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    glue = entry.runtime_data
+    assert glue._cancel_started is not None  # waiting for HA to finish starting
+
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+    assert glue._cancel_started is None  # fired, so HA already removed it
+
+    caplog.clear()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert "Unable to remove unknown job listener" not in caplog.text
+
+
+async def test_unload_before_start_still_removes_the_listener(
+    hass: HomeAssistant,
+) -> None:
+    # The other half of the contract: unloading while HA is still starting must
+    # actually cancel the listener, so no reconcile runs for an entry that is gone.
+    await async_setup_fake_home_keeper(hass)
+    hass.set_state(CoreState.not_running)
+    before = hass.bus.async_listeners().get(EVENT_HOMEASSISTANT_STARTED, 0)
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    glue = entry.runtime_data
+    assert hass.bus.async_listeners()[EVENT_HOMEASSISTANT_STARTED] == before + 1
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert glue._cancel_started is None
+    assert hass.bus.async_listeners().get(EVENT_HOMEASSISTANT_STARTED, 0) == before

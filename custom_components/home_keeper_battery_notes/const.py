@@ -42,6 +42,12 @@ BN_SERVICE_CHECK_LAST_REPORTED = "check_battery_last_reported"
 # Battery-low binary_sensor device class, used to find Battery Notes' low sensors in
 # the entity registry during reconciliation (robust to entity_id renames/i18n).
 BN_BATTERY_LOW_DEVICE_CLASS = "battery"
+# Battery Notes' "battery plus" *sensor* carries the charge level; the battery-low
+# binary sensor above does not (it exposes type/quantity/thresholds only). A reconcile
+# reads the level from here so its tasks get the same "was at N%" note a task created
+# from a live event does. Same device class as the low sensor, different domain — kept
+# as its own constant because it is a separate Battery Notes contract point.
+BN_BATTERY_LEVEL_DEVICE_CLASS = "battery"
 
 # Event data field names.
 FIELD_DEVICE_ID = "device_id"

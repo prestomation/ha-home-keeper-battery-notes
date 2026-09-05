@@ -101,7 +101,10 @@ every rechargeable it tracks.
 > **Switching between Charge it and Replace it recreates the affected tasks**, which
 > starts their completion history over. A task's name is locked to the managing
 > integration and Home Keeper won't let even us rename it, so the conversion can't be an
-> edit. Only rechargeables are touched; disposable-cell tasks are never affected.
+> edit. It also renames the task's device-page entities — a `Replace battery: Hallway
+> Lock` task's `button.hallway_lock_replace_battery_hallway_lock_mark_done` becomes
+> `…_charge_battery_…` — so update any automation or dashboard card that points at one.
+> Only rechargeables are touched; disposable-cell tasks are never affected.
 
 ## Dead / non-reporting batteries
 
