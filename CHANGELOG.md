@@ -4,6 +4,41 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
+## [0.3.0] - 2026-09-05
+
+### Added
+
+- **"Charge battery" tasks for rechargeables.** The **Rechargeable batteries** option
+  now offers **Charge it**, which raises a *"Charge battery: …"* task instead of a
+  replacement one. Completing a charge task never mirrors to Battery Notes, because
+  you charged the battery and did not change it. (Fixes #18)
+
+### Changed
+
+- **The *Skip rechargeable batteries* switch became the *Rechargeable batteries*
+  choice.** Existing setups keep working as before: **on** is now **Ignore them**, and
+  **off** is now **Charge it**. Pick **Replace it** to keep raising a replacement task.
+- **Rechargeable tasks of the wrong kind are recreated on the next reconcile.** Home
+  Keeper locks a managed task's name against every edit, so the glue removes the old
+  task and creates a new one instead of renaming it. That resets the device's
+  completion history and its device-page entity ids, so update anything that points at
+  them.
+
+### Fixed
+
+- **A task created by a reconcile records the battery level again.** Battery Notes
+  keeps the charge level on a different sensor than the one the reconcile read, so a
+  re-created task dropped the level from its note. It reads both sensors now.
+- **Changing an option no longer logs an error.** The first options change after a
+  restart removed an already-removed `homeassistant_started` listener, which Home
+  Assistant reported as `Unable to remove unknown job listener` with a traceback. The
+  glue was working fine; only the log said otherwise.
+- **The task name template's hint reads as English again.** Home Assistant runs a
+  field's description through a message formatter, which took the `{device_name}` in
+  *"Use {device_name} for the battery's device"* for a variable it was never given and
+  printed a `MISSING_VALUE` error in place of the whole sentence. The options form
+  supplies it now, so the hint says what it always meant to.
+
 ## [0.3.0b1] - 2026-08-23
 
 ### Added
