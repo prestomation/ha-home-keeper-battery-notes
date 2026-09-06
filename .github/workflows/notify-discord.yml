@@ -1,4 +1,4 @@
-# Notifies Discord of external interactions on this repo.
+# Notifies Discord of external interactions and releases on this repo.
 # The actual logic lives in prestomation/.github as a reusable workflow.
 # Set the DISCORD_WEBHOOK_URL repo secret to point to the right Discord channel.
 
@@ -15,6 +15,8 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created]
+  release:
+    types: [published]
 
 jobs:
   notify:
