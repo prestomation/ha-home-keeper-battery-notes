@@ -62,7 +62,43 @@ def test_low_with_no_task_creates_armed_triggered_task():
     assert mb["integration"] == "home_keeper_battery_notes"
     assert mb["config_entry_id"] == CFG
     assert mb["deletion_protected"] is True
-    assert mb["locked_fields"] == ["name", "device_id"]
+    assert mb["locked_fields"] == ["name", "notes", "device_id", "recurrence_type"]
+
+
+def test_locked_fields_cover_every_field_we_write():
+    """Each field the payload owns is declared, so a user edit to it cannot survive.
+
+    ``source``, ``task_chips`` and ``managed_by`` are excluded on purpose: they are not
+    fields the edit form offers, and locking ``task_chips`` would break the
+    ``UpdateChips`` backfill below.
+    """
+    action = L.plan_battery_low(
+        [],
+        device_id="dev1",
+        device_name="Front door",
+        config_entry_id=CFG,
+        name_template=TMPL,
+    )
+    p = action.payload
+    written = set(p) - {"source", "task_chips", "managed_by"}
+    assert written == set(p["managed_by"]["locked_fields"])
+
+
+def test_task_chips_is_not_locked():
+    """``UpdateChips`` patches ``task_chips`` through ``update_task``.
+
+    Home Keeper strips locked fields from *every* update, ours included, so locking this
+    one would silently stop the chip backfill for a task created before its battery type
+    was known.
+    """
+    action = L.plan_battery_low(
+        [],
+        device_id="dev1",
+        device_name="Front door",
+        config_entry_id=CFG,
+        name_template=TMPL,
+    )
+    assert "task_chips" not in action.payload["managed_by"]["locked_fields"]
 
 
 def test_low_with_dormant_task_arms_it():

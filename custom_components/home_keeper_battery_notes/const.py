@@ -128,6 +128,20 @@ COMPLETION_PROMPT = "Mark battery as replaced?"
 # A charge completion is recorded in Home Keeper only — Battery Notes has no notion of
 # "charged", and mirroring it as a *replacement* would falsify its replacement history.
 CHARGE_COMPLETION_PROMPT = "Mark battery as charged?"
+
+# The task fields we own, declared to Home Keeper as ``managed_by.locked_fields``. Home
+# Keeper drops them from its edit form and strips them from every ``update_task``, so a
+# user edit to one of these can never survive. We write all four in
+# ``logic.build_add_task_payload``: the name and the notes are rendered from templates,
+# the device is the battery's own, and the kind is always ``triggered`` (an interval
+# task would never arm or clear).
+#
+# ``task_chips`` is deliberately absent. ``UpdateChips`` patches it in place through
+# ``update_task`` when a task was created before its battery type was known, and Home
+# Keeper strips locked fields from *every* update — including ours — so locking it
+# would silently stop the chip backfill.
+LOCKED_FIELDS = ["name", "notes", "device_id", "recurrence_type"]
+
 # Icon for the battery-spec chip, per kind.
 CHIP_ICON = "mdi:battery"
 CHARGE_CHIP_ICON = "mdi:battery-charging"
