@@ -4,6 +4,14 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
+## [0.4.0b1]
+
+### Changed
+
+- **Battery task fields.** Battery Notes now owns the notes text and the task kind, as
+  it already owned the name and the device. Home Keeper leaves all 4 out of its edit
+  form, so a change you make there is no longer lost on the next update.
+
 ## [0.3.0] - 2026-09-05
 
 ### Added

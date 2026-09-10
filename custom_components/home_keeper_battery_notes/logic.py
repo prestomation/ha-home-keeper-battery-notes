@@ -34,6 +34,7 @@ from .const import (
     DEFAULT_RECHARGEABLE_MODE,
     KIND_CHARGE,
     KIND_REPLACE,
+    LOCKED_FIELDS,
     MANAGED_DISPLAY_NAME,
     MANAGED_ICON,
     OPT_RECHARGEABLE_MODE,
@@ -276,8 +277,9 @@ def build_add_task_payload(
 
     Carries a ``source`` namespaced to us (so we recognise it later, and carrying the
     *kind* so we can tell a charge task from a replace one) and a ``managed_by`` block
-    so Home Keeper renders the "Managed by Battery Notes" chip, locks the name/device,
-    shows the completion prompt, and protects deletion while we're installed (with
+    so Home Keeper renders the "Managed by Battery Notes" chip, locks the fields we own
+    (``LOCKED_FIELDS``), shows the completion prompt, and protects deletion while we're
+    installed (with
     ``config_entry_id`` so the protection lifts if we're removed). No schedule fields —
     it's a ``triggered`` task.
 
@@ -306,7 +308,7 @@ def build_add_task_payload(
             "completion_prompt": (
                 CHARGE_COMPLETION_PROMPT if kind == KIND_CHARGE else COMPLETION_PROMPT
             ),
-            "locked_fields": ["name", "device_id"],
+            "locked_fields": list(LOCKED_FIELDS),
         },
     }
 
