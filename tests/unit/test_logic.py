@@ -71,6 +71,14 @@ def test_locked_fields_cover_every_field_we_write():
     ``source``, ``task_chips`` and ``managed_by`` are excluded on purpose: they are not
     fields the edit form offers, and locking ``task_chips`` would break the
     ``UpdateChips`` backfill below.
+
+    This is a *completeness* check, not a correctness one, and deliberately so. It
+    derives what it expects from the payload's own keys, so it cannot tell you whether a
+    field ought to be locked — only that we did not write one and forget to declare it.
+    That is the whole design rule here: lock everything we write, except what we patch
+    in place. When a new field makes this go red, the fix is to decide which side of
+    that rule it falls on and then either declare it or add it to the exclusions above,
+    with a reason — not to make the assertion pass.
     """
     action = L.plan_battery_low(
         [],
