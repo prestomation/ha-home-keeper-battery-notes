@@ -9,6 +9,12 @@ sync. They need a real HA test environment (pytest-homeassistant-custom-componen
 from __future__ import annotations
 
 import pytest
+
+# A plain import, never a skip. Home Keeper's fake imports Home Assistant, and a
+# Python too old for the Home Assistant the fake needs makes pip resolve an older
+# Home Assistant that raises ImportError here. A skip made that look like a
+# deliberate exclusion, and this lane reported green while it ran nothing.
+from home_keeper.testing import async_setup_fake_home_keeper
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant, SupportsResponse
 from homeassistant.data_entry_flow import FlowResultType
@@ -36,12 +42,6 @@ from custom_components.home_keeper_battery_notes.const import (
     OPT_STOCK_ENABLED,
     OPT_TREAT_NOT_REPORTED,
 )
-
-# A plain import, never a skip. Home Keeper's fake imports Home Assistant, and a
-# Python too old for the Home Assistant the fake needs makes pip resolve an older
-# Home Assistant that raises ImportError here. A skip made that look like a
-# deliberate exclusion, and this lane reported green while it ran nothing.
-from home_keeper.testing import async_setup_fake_home_keeper
 
 DEVICE = "dev_front_door"
 
