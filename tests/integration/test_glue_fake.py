@@ -1127,6 +1127,35 @@ async def test_stock_disabled_keeps_home_keeper_untouched(hass: HomeAssistant) -
     assert "part" not in (task.get("source") or {})
 
 
+async def test_a_failing_stock_read_leaves_the_task_flow_intact(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A Home Keeper that refuses ``list_assets`` must not break the task the event
+    created. The stock pass is skipped with a warning and the task stands."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    async def _refuse(call):
+        raise HomeAssistantError("appliances unavailable")
+
+    hass.services.async_remove(HK_DOMAIN, "list_assets")
+    hass.services.async_register(
+        HK_DOMAIN, "list_assets", _refuse, supports_response=SupportsResponse.ONLY
+    )
+
+    await _fire_typed_low(hass)
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task is not None and task["next_due"] is not None
+    assert "part" not in (task.get("source") or {})
+    # The appliance from the startup pass stands, but no part was written for the
+    # type the event reported.
+    assert all(not asset.get("parts") for asset in hk.assets.values())
+    assert "Battery stock pass skipped" in caplog.text
+
+
 async def test_the_appliance_name_follows_the_option(hass: HomeAssistant) -> None:
     hk = await async_setup_fake_home_keeper(hass)
     entry = MockConfigEntry(

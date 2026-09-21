@@ -602,24 +602,30 @@ class BatteryNotesGlue:
         """
         if not self._stock_enabled or not self._hk_ready(HK_SERVICE_LIST_ASSETS):
             return
-        for _pass in range(2):
-            actions = logic.plan_stock_reconcile(
-                await self._list_assets(),
-                await self._list_tasks(),
-                devices,
-                config_entry_id=self.entry.entry_id,
-                appliance_name=self._stock_appliance_name,
-            )
-            if not actions:
-                return
-            for action in actions:
-                await self._execute(action)
-            _LOGGER.debug("Battery stock applied %d action(s)", len(actions))
-            if not any(
-                isinstance(action, (logic.EnsureAsset, logic.UpdateManagedAsset))
-                for action in actions
-            ):
-                return
+        try:
+            for _pass in range(2):
+                actions = logic.plan_stock_reconcile(
+                    await self._list_assets(),
+                    await self._list_tasks(),
+                    devices,
+                    config_entry_id=self.entry.entry_id,
+                    appliance_name=self._stock_appliance_name,
+                )
+                if not actions:
+                    return
+                for action in actions:
+                    await self._execute(action)
+                _LOGGER.debug("Battery stock applied %d action(s)", len(actions))
+                if not any(
+                    isinstance(action, (logic.EnsureAsset, logic.UpdateManagedAsset))
+                    for action in actions
+                ):
+                    return
+        except (HomeAssistantError, ValueError) as err:
+            # The stock pass is a bonus on top of the task flow. A Home Keeper that
+            # refuses a read here must not turn into an error in the event listener
+            # that created or armed the task a moment ago.
+            _LOGGER.warning("Battery stock pass skipped: %s", err)
 
     def _learn_from_event(self, data: dict[str, Any]) -> None:
         """Remember what a Battery Notes event said about a device's battery."""
