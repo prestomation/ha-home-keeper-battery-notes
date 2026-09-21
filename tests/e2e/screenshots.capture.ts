@@ -16,10 +16,17 @@ import {
   openPanel,
   rechargeableLow,
   setGlueOptions,
+  setPartStock,
   typedBatteryLow,
+  waitForParts,
+  waitForTaskLink,
 } from './tests/helpers';
 
 const OUT = process.env.SHOT_DIR || '/tmp/glue-shots';
+/** The phone the mobile shots are taken on. Below 700px the panel is a different
+ *  layout, not a narrower one, so every surface gets a shot at both widths. */
+const PHONE = { width: 390, height: 844 };
+const DESKTOP = { width: 1280, height: 900 };
 const DEVICE = 'shot_front_door';
 const DEVICE_NAME = 'Front door sensor';
 const RECHARGEABLE = 'shot_hallway_lock';
@@ -131,4 +138,72 @@ test('capture the rechargeable modes', async ({ page, request }) => {
 
   // Leave the container on the default, so a re-run starts where a user would.
   await setGlueOptions(request, { rechargeable_mode: 'skip' });
+});
+
+test('capture the battery stock', async ({ page, request }) => {
+  const panel = page.locator('home-keeper-panel').first();
+
+  // Two more devices, so the appliance holds 2 battery types and the AAA part is
+  // used by more than one device (the Kitchen remote above takes AAA as well).
+  await typedBatteryLow(request, 'shot_smoke_alarm', 'Smoke alarm', 'AA', 2);
+  await typedBatteryLow(request, 'shot_wall_clock', 'Wall clock', 'AAA', 1);
+  const asset = await waitForParts(request, ['AA', 'AAA']);
+
+  // Count the AAA spares, the way a user does: AA stays untracked, so the shot
+  // shows both states of a part — a count with a reorder point, and Start counting.
+  const aaa = asset.parts.find((part) => part.name === 'AAA')!;
+  await setPartStock(request, asset.id, aaa, 4, 2);
+
+  // The head's "Managed by Battery Notes" chip is the one anchor both layouts
+  // render: at phone width the appliance list behind the page is hidden, and its
+  // name is the first — hidden — match for "Batteries".
+  const owner = panel.getByText('Managed by Battery Notes').first();
+  await page.goto(`/home-keeper/appliances/${asset.id}`);
+  await panel.waitFor({ state: 'attached', timeout: 45_000 });
+  await expect(owner).toBeVisible({ timeout: 20_000 });
+  await expect(panel.getByText('Used by', { exact: false }).first()).toBeVisible();
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: `${OUT}/stock-1-batteries-appliance.png`, fullPage: true });
+
+  // The same page on a phone, where the panel draws a different layout.
+  await page.setViewportSize(PHONE);
+  await page.goto(`/home-keeper/appliances/${asset.id}`);
+  await panel.waitFor({ state: 'attached', timeout: 45_000 });
+  await expect(owner).toBeVisible({ timeout: 20_000 });
+  await page.waitForTimeout(800);
+  await page.screenshot({
+    path: `${OUT}/stock-1b-mobile-batteries-appliance.png`,
+    fullPage: true,
+  });
+  await page.setViewportSize(DESKTOP);
+
+  // The task side of the same count: the Wall clock's replacement task says what it
+  // takes and what is left, because Battery Notes linked it to the AAA part.
+  const chip = panel.locator('ha-assist-chip.hk-counted').first();
+  // The link lands after the event that made the task, so wait for it before the
+  // panel is loaded: the panel reads the task list once per page load.
+  await waitForTaskLink(request, 'shot_wall_clock');
+  await openPanel(page);
+  await expect(chip).toContainText('Takes 1 AAA', { timeout: 20_000 });
+  await expect(chip).toContainText('4 left');
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: `${OUT}/stock-2-task-stock-chip.png`, fullPage: true });
+
+  // On a phone the same chip is shot on the task's own page: in the list it sits
+  // behind the fixed bottom tab bar, which a full-page capture draws across the row.
+  const clock = await glueTask(request, 'shot_wall_clock');
+  expect(clock, 'no Wall clock task to open').toBeTruthy();
+  await page.setViewportSize(PHONE);
+  await page.goto(`/home-keeper/tasks/${clock!.id}`);
+  await panel.waitFor({ state: 'attached', timeout: 45_000 });
+  await expect(panel.locator('ha-assist-chip.hk-counted').first()).toContainText(
+    'Takes 1 AAA',
+    { timeout: 20_000 },
+  );
+  await page.waitForTimeout(600);
+  await page.screenshot({
+    path: `${OUT}/stock-2b-mobile-task-stock-chip.png`,
+    fullPage: true,
+  });
+  await page.setViewportSize(DESKTOP);
 });

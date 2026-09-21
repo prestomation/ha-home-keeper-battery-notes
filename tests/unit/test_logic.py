@@ -701,3 +701,337 @@ def test_reconcile_skips_update_chips_when_type_still_unknown():
         name_template=TMPL,
     )
     assert not any(isinstance(a, L.UpdateChips) for a in actions)
+
+
+# ── battery stock: normalizing a battery type ────────────────────────────────
+def test_normalize_battery_type_trims_and_collapses_whitespace():
+    assert L.normalize_battery_type("  AAA  ") == "AAA"
+    assert L.normalize_battery_type("CR 2032") == "CR 2032"
+    assert L.normalize_battery_type("CR  2032\n") == "CR 2032"
+
+
+def test_normalize_battery_type_keeps_the_spelling_and_folds_only_the_key():
+    assert L.normalize_battery_type("aaa") == "aaa"
+    assert L.battery_type_key("AAA") == L.battery_type_key("aaa")
+
+
+def test_normalize_battery_type_rejects_empty_none_and_non_strings():
+    assert L.normalize_battery_type(None) is None
+    assert L.normalize_battery_type("") is None
+    assert L.normalize_battery_type("   ") is None
+    assert L.normalize_battery_type(9) is None
+    assert L.normalize_battery_type(["AAA"]) is None
+
+
+# ── battery stock: the usage note ────────────────────────────────────────────
+def test_usage_note_names_the_devices_in_alphabetical_order():
+    note = L.usage_note([("Hall remote", 2), ("Front door sensor", 2)])
+    assert note == "Used by 2 devices · 4 installed — Front door sensor (2), Hall remote (2)"
+
+
+def test_usage_note_is_singular_for_one_device_and_one_cell():
+    assert L.usage_note([("Front door sensor", 1)]) == (
+        "Used by 1 device · 1 installed — Front door sensor (1)"
+    )
+
+
+def test_usage_note_counts_the_devices_it_does_not_name():
+    entries = [(f"Sensor {index}", 1) for index in range(1, 9)]
+    note = L.usage_note(entries)
+    assert "Used by 8 devices · 8 installed" in note
+    assert "Sensor 6 (1)" in note
+    assert "Sensor 7" not in note
+    assert note.endswith("+2 more")
+
+
+def test_usage_note_without_a_device_says_so():
+    assert L.usage_note([]) == "Not used by any device"
+
+
+# ── battery stock: the part list we want ─────────────────────────────────────
+def _device(name, battery_type, quantity=1, *, batteries=None):
+    record = {
+        "name": name,
+        "battery_type": battery_type,
+        "battery_quantity": quantity,
+        "rechargeable": L.is_rechargeable(battery_type),
+    }
+    if batteries is not None:
+        record["batteries"] = batteries
+    return record
+
+
+def _battery(battery_type, quantity=1):
+    return {
+        "battery_type": battery_type,
+        "battery_quantity": quantity,
+        "rechargeable": L.is_rechargeable(battery_type),
+    }
+
+
+def _stored_part(part_id, name, *, notes="", stock=None):
+    return {"id": part_id, "name": name, "type": "consumable", "notes": notes, "stock": stock}
+
+
+def test_desired_parts_makes_one_consumable_part_per_type():
+    parts = L.desired_parts(
+        {
+            "d1": _device("Front door sensor", "AAA", 2),
+            "d2": _device("Kitchen remote", "AA", 1),
+        },
+        [],
+    )
+    assert [part["name"] for part in parts] == ["AA", "AAA"]
+    assert {part["type"] for part in parts} == {"consumable"}
+    assert parts[1]["notes"] == "Used by 1 device · 2 installed — Front door sensor (2)"
+    assert "id" not in parts[0]
+
+
+def test_desired_parts_collapses_types_that_differ_by_case_or_space():
+    parts = L.desired_parts(
+        {
+            "d1": _device("Front door sensor", "AAA", 2),
+            "d2": _device("Hall remote", " aaa ", 2),
+        },
+        [],
+    )
+    assert len(parts) == 1
+    assert parts[0]["name"] == "AAA"
+    assert parts[0]["notes"] == (
+        "Used by 2 devices · 4 installed — Front door sensor (2), Hall remote (2)"
+    )
+
+
+def test_desired_parts_echoes_the_stored_part_id_and_name():
+    stored = [_stored_part("p1", "AAA", notes="stale")]
+    parts = L.desired_parts({"d1": _device("Front door sensor", "aaa", 2)}, stored)
+    assert parts[0]["id"] == "p1"
+    assert parts[0]["name"] == "AAA"
+
+
+def test_desired_parts_keeps_a_counted_type_no_device_uses():
+    stored = [_stored_part("p1", "CR2032", notes="old", stock=4)]
+    parts = L.desired_parts({"d1": _device("Kitchen remote", "AA", 1)}, stored)
+    assert [part["name"] for part in parts] == ["AA", "CR2032"]
+    assert parts[1]["notes"] == "Not used by any device"
+
+
+def test_desired_parts_drops_an_uncounted_type_no_device_uses():
+    stored = [_stored_part("p1", "CR2032")]
+    parts = L.desired_parts({"d1": _device("Kitchen remote", "AA", 1)}, stored)
+    assert [part["name"] for part in parts] == ["AA"]
+
+
+def test_desired_parts_leaves_out_a_rechargeable_and_an_unknown_type():
+    parts = L.desired_parts(
+        {
+            "d1": _device("Hallway lock", "Rechargeable", 1),
+            "d2": _device("Old sensor", None),
+            "d3": _device("Kitchen remote", "AA", 1),
+        },
+        [],
+    )
+    assert [part["name"] for part in parts] == ["AA"]
+
+
+def test_desired_parts_counts_both_entries_of_one_device():
+    device = _device(
+        "Weather station",
+        "AA",
+        2,
+        batteries=[_battery("AA", 2), _battery("AAA", 3)],
+    )
+    parts = L.desired_parts({"d1": device}, [])
+    assert [part["name"] for part in parts] == ["AA", "AAA"]
+    assert parts[0]["notes"] == "Used by 1 device · 2 installed — Weather station (2)"
+    assert parts[1]["notes"] == "Used by 1 device · 3 installed — Weather station (3)"
+
+
+# ── battery stock: the plan ──────────────────────────────────────────────────
+def _asset(parts, *, name="Batteries", asset_id="asset1"):
+    return {
+        "id": asset_id,
+        "name": name,
+        "parts": parts,
+        "source": {"home_keeper_battery_notes": {"role": "battery_stock"}},
+        "managed_by": {"integration": "home_keeper_battery_notes"},
+    }
+
+
+def _plan(assets, tasks, devices, *, appliance_name="Batteries"):
+    return L.plan_stock_reconcile(
+        assets,
+        tasks,
+        devices,
+        config_entry_id=CFG,
+        appliance_name=appliance_name,
+    )
+
+
+def test_plan_without_an_appliance_creates_one_with_its_parts():
+    actions = _plan([], [], {"d1": _device("Front door sensor", "AAA", 2)})
+    assert len(actions) == 1
+    action = actions[0]
+    assert isinstance(action, L.EnsureAsset)
+    assert action.payload["name"] == "Batteries"
+    assert action.payload["kind"] == "virtual"
+    assert action.payload["source"] == {
+        "home_keeper_battery_notes": {"role": "battery_stock"}
+    }
+    managed = action.payload["managed_by"]
+    assert managed["integration"] == "home_keeper_battery_notes"
+    assert managed["config_entry_id"] == CFG
+    assert managed["deletion_protected"] is True
+    assert managed["locked_fields"] == ["name", "parts"]
+    assert [part["name"] for part in action.payload["parts"]] == ["AAA"]
+
+
+def test_plan_ignores_an_appliance_that_is_not_ours():
+    theirs = {"id": "a9", "name": "Batteries", "parts": [], "source": {"other": {}}}
+    assert L.find_our_asset([theirs]) is None
+    assert isinstance(_plan([theirs], [], {})[0], L.EnsureAsset)
+
+
+def test_plan_renames_the_appliance_when_the_option_changes():
+    asset = _asset([_stored_part("p1", "AAA", notes="Not used by any device", stock=2)])
+    actions = _plan([asset], [], {}, appliance_name="Battery drawer")
+    assert actions == [L.UpdateManagedAsset("asset1", name="Battery drawer", parts=None)]
+
+
+def test_plan_writes_the_parts_when_a_type_appears():
+    asset = _asset([])
+    actions = _plan([asset], [], {"d1": _device("Front door sensor", "AAA", 2)})
+    assert len(actions) == 1
+    assert isinstance(actions[0], L.UpdateManagedAsset)
+    assert actions[0].name is None
+    assert [part["name"] for part in actions[0].parts] == ["AAA"]
+
+
+def test_plan_links_a_replace_task_for_the_quantity_the_device_holds():
+    notes = "Used by 1 device · 2 installed — Front door sensor (2)"
+    asset = _asset([_stored_part("p1", "AAA", notes=notes)])
+    task = _task("d1")
+    actions = _plan([asset], [task], {"d1": _device("Front door sensor", "AAA", 2)})
+    assert actions == [L.LinkConsumable("task_d1", "asset1", "p1", 2)]
+
+
+def test_plan_links_one_cell_when_the_device_reports_no_quantity():
+    notes = "Used by 1 device · 1 installed — Front door sensor (1)"
+    asset = _asset([_stored_part("p1", "AAA", notes=notes)])
+    task = _task("d1")
+    actions = _plan([asset], [task], {"d1": _device("Front door sensor", "AAA", None)})
+    assert actions == [L.LinkConsumable("task_d1", "asset1", "p1", 1)]
+
+
+def test_plan_is_idempotent_on_a_second_pass():
+    asset = _asset(
+        [
+            {
+                "id": "p1",
+                "name": "AAA",
+                "type": "consumable",
+                "notes": "Used by 1 device · 2 installed — Front door sensor (2)",
+                "stock": 4,
+            }
+        ]
+    )
+    task = _task("d1")
+    task["source"]["part"] = {
+        "asset_id": "asset1",
+        "part_id": "p1",
+        "manual": True,
+        "quantity": 2,
+    }
+    assert _plan([asset], [task], {"d1": _device("Front door sensor", "AAA", 2)}) == []
+
+
+def test_plan_relinks_when_the_quantity_changes():
+    asset = _asset(
+        [
+            {
+                "id": "p1",
+                "name": "AAA",
+                "type": "consumable",
+                "notes": "Used by 1 device · 2 installed — Front door sensor (2)",
+                "stock": 4,
+            }
+        ]
+    )
+    task = _task("d1")
+    task["source"]["part"] = {
+        "asset_id": "asset1",
+        "part_id": "p1",
+        "manual": True,
+        "quantity": 1,
+    }
+    actions = _plan([asset], [task], {"d1": _device("Front door sensor", "AAA", 2)})
+    assert L.LinkConsumable("task_d1", "asset1", "p1", 2) in actions
+
+
+def test_plan_never_links_a_charge_task():
+    notes = "Used by 1 device · 2 installed — Hallway lock (2)"
+    asset = _asset([_stored_part("p1", "AAA", notes=notes)])
+    charge = _charge_task("d1")
+    actions = _plan([asset], [charge], {"d1": _device("Hallway lock", "AAA", 2)})
+    assert actions == []
+
+
+def test_plan_unlinks_a_charge_task_that_carries_a_link():
+    notes = "Used by 1 device · 2 installed — Hallway lock (2)"
+    asset = _asset([_stored_part("p1", "AAA", notes=notes)])
+    charge = _charge_task("d1")
+    charge["source"]["part"] = {"asset_id": "asset1", "part_id": "p1", "manual": True}
+    actions = _plan([asset], [charge], {"d1": _device("Hallway lock", "AAA", 2)})
+    assert actions == [L.UnlinkConsumable("task_d1")]
+
+
+def test_plan_unlinks_a_task_whose_device_is_gone():
+    asset = _asset(
+        [_stored_part("p1", "AAA", notes="Not used by any device", stock=4)]
+    )
+    task = _task("d1")
+    task["source"]["part"] = {"asset_id": "asset1", "part_id": "p1", "manual": True}
+    actions = _plan([asset], [task], {})
+    assert actions == [L.UnlinkConsumable("task_d1")]
+
+
+def test_plan_leaves_an_unlinked_task_with_an_unknown_type_alone():
+    asset = _asset(
+        [_stored_part("p1", "AAA", notes="Not used by any device", stock=4)]
+    )
+    task = _task("d1")
+    actions = _plan([asset], [task], {"d1": _device("Old sensor", None)})
+    assert actions == []
+
+
+def test_plan_links_a_two_entry_device_to_the_larger_quantity():
+    asset = _asset(
+        [
+            _stored_part(
+                "p1", "AA", notes="Used by 1 device · 2 installed — Weather station (2)"
+            ),
+            _stored_part(
+                "p2",
+                "AAA",
+                notes="Used by 1 device · 3 installed — Weather station (3)",
+            ),
+        ]
+    )
+    task = _task("d1")
+    device = _device(
+        "Weather station",
+        "AA",
+        2,
+        batteries=[_battery("AA", 2), _battery("AAA", 3)],
+    )
+    actions = _plan([asset], [task], {"d1": device})
+    assert L.LinkConsumable("task_d1", "asset1", "p2", 3) in actions
+
+
+def test_plan_waits_for_the_part_before_it_links():
+    # The type is new, so the part has no id yet. The link follows the write.
+    asset = _asset([])
+    task = _task("d1")
+    actions = _plan([asset], [task], {"d1": _device("Front door sensor", "AAA", 2)})
+    assert len(actions) == 1
+    assert isinstance(actions[0], L.UpdateManagedAsset)

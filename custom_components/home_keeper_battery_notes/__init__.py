@@ -17,7 +17,14 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import HK_DOMAIN, SOURCE_NS
+from . import logic
+from .const import (
+    HK_DOMAIN,
+    HK_SERVICE_DELETE_ASSET,
+    HK_SERVICE_LIST_ASSETS,
+    HK_SERVICE_UPDATE_ASSET,
+    SOURCE_NS,
+)
 from .wiring import BatteryNotesGlue
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,12 +57,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """On permanent removal, proactively delete the tasks we own.
+    """On permanent removal, delete the tasks we own and hand the appliance back.
 
     Best-effort and guarded: if Home Keeper is gone, its orphan detection already
     lets the user remove our (now unprotected) tasks. We pass ``force`` because our
     own tasks are deletion-protected while our config entry still resolves.
     """
+    await _remove_battery_appliance(hass)
     if not hass.services.has_service(HK_DOMAIN, "list_tasks"):
         return
     try:
@@ -77,3 +85,42 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.debug("Failed to delete task %s on removal", task.get("id"))
+
+
+async def _remove_battery_appliance(hass: HomeAssistant) -> None:
+    """Hand the battery appliance back to the user, or remove an empty one.
+
+    A part the user counted holds spares that are still in the drawer, so the
+    appliance stays and only the ownership goes: Home Keeper unlocks the name and the
+    part list, and the user keeps a plain appliance with the counts. An appliance
+    whose parts track no stock holds nothing to keep, so it goes with us.
+    """
+    if not hass.services.has_service(HK_DOMAIN, HK_SERVICE_LIST_ASSETS):
+        return
+    try:
+        resp = await hass.services.async_call(
+            HK_DOMAIN, HK_SERVICE_LIST_ASSETS, {}, blocking=True, return_response=True
+        )
+        asset = logic.find_our_asset(list((resp or {}).get("assets", [])))
+        if asset is None:
+            return
+        counted = any(
+            part.get("stock") is not None for part in asset.get("parts") or []
+        )
+        if counted:
+            if hass.services.has_service(HK_DOMAIN, HK_SERVICE_UPDATE_ASSET):
+                await hass.services.async_call(
+                    HK_DOMAIN,
+                    HK_SERVICE_UPDATE_ASSET,
+                    {"asset_id": asset["id"], "managed_by": None},
+                    blocking=True,
+                )
+        elif hass.services.has_service(HK_DOMAIN, HK_SERVICE_DELETE_ASSET):
+            await hass.services.async_call(
+                HK_DOMAIN,
+                HK_SERVICE_DELETE_ASSET,
+                {"asset_id": asset["id"], "force": True},
+                blocking=True,
+            )
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Could not release the battery appliance", exc_info=True)

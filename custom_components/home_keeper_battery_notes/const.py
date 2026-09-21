@@ -18,6 +18,15 @@ HK_EVENT_TASK_COMPLETED = "home_keeper_task_completed"
 # setup and respond to this ping, so discovery works regardless of startup order.
 HK_EVENT_REGISTER_COMPANIONS = "home_keeper_register_companions"
 HK_SERVICE_REGISTER_COMPANION = "register_companion"
+# The appliance half of the Home Keeper contract (docs/INTEGRATING.md §8). Each call
+# is guarded with ``has_service``, so a Home Keeper without the appliance services
+# leaves the glue on its task behaviour.
+HK_SERVICE_LIST_ASSETS = "list_assets"
+HK_SERVICE_ADD_ASSET = "add_asset"
+HK_SERVICE_UPDATE_ASSET = "update_asset"
+HK_SERVICE_DELETE_ASSET = "delete_asset"
+HK_SERVICE_UPDATE_MANAGED_ASSET = "update_managed_asset"
+HK_SERVICE_SET_TASK_CONSUMABLE = "set_task_consumable"
 # Namespace for the opaque ``source`` dict we attach to tasks we create, so we can
 # recognise our own tasks later (``source[SOURCE_NS] == {"device_id": ...}``).
 SOURCE_NS = DOMAIN
@@ -75,6 +84,9 @@ OPT_CHARGE_NAME_TEMPLATE = "charge_name_template"
 # entry configured before the mode existed keeps behaving as its owner chose — see
 # ``wiring.BatteryNotesGlue._rechargeable_mode``.
 OPT_SKIP_RECHARGEABLE = "skip_rechargeable"
+# Battery stock: the appliance the glue keeps in Home Keeper, and what it is called.
+OPT_STOCK_ENABLED = "stock_enabled"
+OPT_STOCK_APPLIANCE_NAME = "stock_appliance_name"
 
 DEFAULT_NAME_TEMPLATE = "Replace battery: {device_name}"
 DEFAULT_CHARGE_NAME_TEMPLATE = "Charge battery: {device_name}"
@@ -85,6 +97,8 @@ DEFAULT_CLEAR_ON_RECOVERY = True
 # transient unknown/unavailable blips (e.g. a restart or a brief network dropout).
 DEFAULT_TREAT_NOT_REPORTED = False
 DEFAULT_NOT_REPORTED_DAYS = 3
+DEFAULT_STOCK_ENABLED = True
+DEFAULT_STOCK_APPLIANCE_NAME = "Batteries"
 
 # ── What to do about a rechargeable battery ──────────────────────────────────
 # A rechargeable going low means "charge it", not "replace the battery", so the
@@ -141,6 +155,23 @@ CHARGE_COMPLETION_PROMPT = "Mark battery as charged?"
 # Keeper strips locked fields from *every* update — including ours — so locking it
 # would silently stop the chip backfill.
 LOCKED_FIELDS = ["name", "notes", "device_id", "recurrence_type"]
+
+# ── Battery stock (the appliance we own in Home Keeper) ──────────────────────
+# Home Keeper records who owns an appliance in its ``source`` dict, one payload per
+# namespace. The role says which of our appliances this is, so a second one stays
+# possible without a second namespace.
+ASSET_ROLE_STOCK = "battery_stock"
+# The appliance fields Home Keeper keeps for us: the name, and the part list. Every
+# stock number on a part stays the user's (docs/INTEGRATING.md §8).
+ASSET_LOCKED_FIELDS = ["name", "parts"]
+ASSET_ICON = "mdi:battery"
+# Home Keeper stores a part as a consumable when it holds spares, not a wear item.
+PART_TYPE_CONSUMABLE = "consumable"
+# The part notes for a battery type that no device uses now. The user keeps the count,
+# so the part stays until the count goes.
+USAGE_NOTE_NONE = "Not used by any device"
+# How many device names the usage note lists before it counts the rest.
+USAGE_NOTE_MAX_NAMES = 6
 
 # Icon for the battery-spec chip, per kind.
 CHIP_ICON = "mdi:battery"

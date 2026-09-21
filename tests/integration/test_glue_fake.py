@@ -32,18 +32,16 @@ from custom_components.home_keeper_battery_notes.const import (
     OPT_NOT_REPORTED_DAYS,
     OPT_RECHARGEABLE_MODE,
     OPT_SKIP_RECHARGEABLE,
+    OPT_STOCK_APPLIANCE_NAME,
+    OPT_STOCK_ENABLED,
     OPT_TREAT_NOT_REPORTED,
 )
 
-try:
-    from home_keeper.testing import async_setup_fake_home_keeper
-except ImportError:  # pragma: no cover - home-keeper not installed in this env
-    async_setup_fake_home_keeper = None
-
-pytestmark = pytest.mark.skipif(
-    async_setup_fake_home_keeper is None,
-    reason="home-keeper (test fake) not installed",
-)
+# A plain import, never a skip. Home Keeper's fake imports Home Assistant, and a
+# Python too old for the Home Assistant the fake needs makes pip resolve an older
+# Home Assistant that raises ImportError here. A skip made that look like a
+# deliberate exclusion, and this lane reported green while it ran nothing.
+from home_keeper.testing import async_setup_fake_home_keeper
 
 DEVICE = "dev_front_door"
 
@@ -938,3 +936,244 @@ async def test_reconcile_is_idempotent(hass: HomeAssistant) -> None:
     assert ours[0]["id"] == first["id"]
     assert ours[0]["next_due"] == first["next_due"]
     assert ours[0]["notes"] == first["notes"]
+
+
+# ── battery stock ────────────────────────────────────────────────────────────
+async def _fire_typed_low(
+    hass: HomeAssistant,
+    *,
+    device_id: str = DEVICE,
+    device_name: str = "Front door sensor",
+    battery_type: str = "AAA",
+    battery_quantity: int = 2,
+) -> None:
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {
+            "device_id": device_id,
+            "device_name": device_name,
+            "battery_low": True,
+            "battery_type": battery_type,
+            "battery_quantity": battery_quantity,
+            "battery_level": 8,
+        },
+    )
+    await hass.async_block_till_done()
+
+
+def _stock_asset(hk):
+    return hk.get_asset_by_source(DOMAIN, role="battery_stock")
+
+
+async def _set_stock(hass: HomeAssistant, asset: dict, part: dict, count: float) -> None:
+    """Count the spares the way a user does, through the appliance's own service."""
+    await hass.services.async_call(
+        HK_DOMAIN,
+        "update_asset",
+        {
+            "asset_id": asset["id"],
+            "parts": [{"id": part["id"], "name": part["name"], "stock": count}],
+        },
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+
+async def test_low_battery_creates_the_managed_appliance(hass: HomeAssistant) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    await _fire_typed_low(hass)
+
+    asset = _stock_asset(hk)
+    assert asset is not None
+    assert asset["name"] == "Batteries"
+    assert asset["kind"] == "virtual"
+    assert asset["managed_by"]["integration"] == DOMAIN
+    assert asset["managed_by"]["locked_fields"] == ["name", "parts"]
+    part = hk.part_named(asset["id"], "AAA")
+    assert part is not None
+    assert part["type"] == "consumable"
+    assert part["notes"] == "Used by 1 device · 2 installed — Front door sensor (2)"
+
+
+async def test_a_new_battery_type_arrives_untracked(hass: HomeAssistant) -> None:
+    # A part nobody has counted tracks no stock, so Home Keeper opens no buy task
+    # for a drawer the household has never looked in.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    await _fire_typed_low(hass)
+
+    asset = _stock_asset(hk)
+    assert hk.part_named(asset["id"], "AAA")["stock"] is None
+
+
+async def test_the_replace_task_is_linked_to_the_battery_type(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    await _fire_typed_low(hass)
+
+    asset = _stock_asset(hk)
+    part = hk.part_named(asset["id"], "AAA")
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    link = task["source"]["part"]
+    assert link["asset_id"] == asset["id"]
+    assert link["part_id"] == part["id"]
+    assert link["quantity"] == 2
+
+
+async def test_completing_the_task_takes_the_batteries_off_the_count(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    await _fire_typed_low(hass)
+    asset = _stock_asset(hk)
+    part = hk.part_named(asset["id"], "AAA")
+    await _set_stock(hass, asset, part, 4)
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    hk.fire_user_completion(task["id"])
+    await hass.async_block_till_done()
+
+    assert hk.part_named(asset["id"], "AAA")["stock"] == 2
+
+
+async def test_a_second_device_of_one_type_joins_the_usage_note(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    await _fire_typed_low(hass)
+    await _fire_typed_low(
+        hass, device_id="dev_hall", device_name="Hall remote", battery_quantity=2
+    )
+
+    asset = _stock_asset(hk)
+    assert hk.part_named(asset["id"], "AAA")["notes"] == (
+        "Used by 2 devices · 4 installed — Front door sensor (2), Hall remote (2)"
+    )
+
+
+async def test_a_counted_type_survives_its_last_device(hass: HomeAssistant) -> None:
+    # The spares are in the drawer whatever Battery Notes reports, so the part stays
+    # and only its usage line changes.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+    device_id = _make_bn_battery_device(
+        hass, unique="drawer1", low="on",
+        attributes={"battery_type": "AAA", "battery_quantity": 2},
+    )
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+    asset = _stock_asset(hk)
+    await _set_stock(hass, asset, hk.part_named(asset["id"], "AAA"), 4)
+
+    # The device leaves Battery Notes: its battery sensor goes with it.
+    registry = er.async_get(hass)
+    for entity in list(registry.entities.values()):
+        if entity.device_id == device_id:
+            hass.states.async_remove(entity.entity_id)
+            registry.async_remove(entity.entity_id)
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    part = hk.part_named(asset["id"], "AAA")
+    assert part is not None
+    assert part["stock"] == 4
+    assert part["notes"] == "Not used by any device"
+
+
+async def test_a_charge_task_is_never_linked(hass: HomeAssistant) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_RECHARGEABLE_MODE: "charge"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    await _fire_typed_low(
+        hass,
+        device_id="dev_lock",
+        device_name="Hallway lock",
+        battery_type="Rechargeable",
+        battery_quantity=1,
+    )
+
+    task = hk.get_task_by_source(DOMAIN, device_id="dev_lock")
+    assert task["source"][DOMAIN]["kind"] == "charge"
+    assert "part" not in (task.get("source") or {})
+    asset = _stock_asset(hk)
+    assert asset is None or asset["parts"] == []
+
+
+async def test_stock_disabled_keeps_home_keeper_untouched(hass: HomeAssistant) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={OPT_STOCK_ENABLED: False})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    await _fire_typed_low(hass)
+
+    assert hk.assets == {}
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert "part" not in (task.get("source") or {})
+
+
+async def test_the_appliance_name_follows_the_option(hass: HomeAssistant) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_STOCK_APPLIANCE_NAME: "Battery drawer"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    await _fire_typed_low(hass)
+
+    assert _stock_asset(hk)["name"] == "Battery drawer"
+
+
+async def test_a_second_pass_writes_nothing(hass: HomeAssistant) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+    await _fire_typed_low(hass)
+    asset = dict(_stock_asset(hk))
+    task = dict(hk.get_task_by_source(DOMAIN, device_id=DEVICE))
+
+    await entry.runtime_data._reconcile_stock(
+        {
+            DEVICE: {
+                "name": "Front door sensor",
+                "battery_type": "AAA",
+                "battery_quantity": 2,
+                "rechargeable": False,
+            }
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert _stock_asset(hk) == asset
+    assert hk.get_task_by_source(DOMAIN, device_id=DEVICE) == task
+
+
+async def test_removal_hands_a_counted_appliance_back(hass: HomeAssistant) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+    await _fire_typed_low(hass)
+    asset = _stock_asset(hk)
+    await _set_stock(hass, asset, hk.part_named(asset["id"], "AAA"), 4)
+
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+
+    kept = hk.assets[asset["id"]]
+    assert kept["managed_by"] is None
+    assert hk.part_named(asset["id"], "AAA")["stock"] == 4

@@ -21,7 +21,9 @@
           "rechargeable_mode": "Rechargeable batteries",
           "charge_name_template": "Charge task name template",
           "treat_not_reported": "Also flag batteries that stop reporting (often dead)",
-          "not_reported_days": "Days with no report before flagging a battery"
+          "not_reported_days": "Days with no report before flagging a battery",
+          "stock_enabled": "Keep a battery count in Home Keeper",
+          "stock_appliance_name": "Name of the battery appliance"
         },
         "data_description": {
           "name_template": "Use {device_name} for the battery's device. Default: \"Replace battery: {device_name}\".",
@@ -29,7 +31,9 @@
           "rechargeable_mode": "A rechargeable going low means \"charge it\", not \"replace the battery\", so it gets its own handling. Charge it: raise a charge task — right for a radiator valve or lock whose pack you top up as a chore. Ignore them: raise nothing — right for a phone or watch you charge without being told. Replace it: treat it like a disposable, for replacements you track by hand. Switching between the first and last recreates existing tasks, which starts their history over.",
           "charge_name_template": "Used when rechargeable batteries are set to \"Charge it\". Use {device_name} for the battery's device.",
           "treat_not_reported": "A dead battery usually stops reporting instead of going low. When on, a battery that hasn't reported for the number of days below gets a task. The day threshold also filters brief dropouts (restarts, network blips).",
-          "not_reported_days": "Only applies when the option above is on."
+          "not_reported_days": "Only applies when the option above is on.",
+          "stock_enabled": "Home Keeper gets an appliance with one part for each battery type Battery Notes reports. Enter a count on a part and Home Keeper takes the batteries a device holds off that count when you complete its replacement task. Turn the option off and the appliance stays as it is.",
+          "stock_appliance_name": "The appliance name in Home Keeper. Default: \"Batteries\"."
         }
       }
     }

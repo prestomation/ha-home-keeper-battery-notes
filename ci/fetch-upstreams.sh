@@ -7,8 +7,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)"
 STAGE="$ROOT/tests/docker/custom_components"
 HK_REPO="${HK_REPO:-https://github.com/prestomation/ha-home-keeper}"
-# Pinned to main (post task_chips merge) until ha-home-keeper cuts v0.7.0b2.
-HK_REF="${HK_REF:-main}"
+# Pinned to the commit of ha-home-keeper#349 (managed appliances), the same ref
+# requirements-test.txt names. Move both to the v0.24.0b8 tag once Home Keeper
+# releases it.
+HK_REF="${HK_REF:-039b9f7e02aaa1f1f059ad49efa95e5d3f33ab4e}"
 # Battery Notes — the integration this glue bridges to.
 BN_REPO="${BN_REPO:-https://github.com/andrew-codechimp/HA-Battery-Notes}"
 BN_REF="${BN_REF:-main}"
@@ -24,8 +26,15 @@ fetch() {
   local tmp
   tmp="$(mktemp -d)"
   echo "[fetch-upstreams] cloning $name ($repo@$ref)..."
-  git clone --depth 1 --branch "$ref" "$repo" "$tmp" 2>/dev/null \
-    || git clone --depth 1 "$repo" "$tmp"
+  # A branch or a tag clones directly; a commit SHA cannot, so fetch it by name
+  # into an empty repository instead. Without the second path a SHA pin fell back
+  # to the default branch and the tier tested an upstream nobody asked for.
+  git clone --depth 1 --branch "$ref" "$repo" "$tmp" 2>/dev/null || {
+    git init -q "$tmp"
+    git -C "$tmp" remote add origin "$repo"
+    git -C "$tmp" fetch -q --depth 1 origin "$ref"
+    git -C "$tmp" checkout -q FETCH_HEAD
+  }
   cp -r "$tmp/custom_components/$name" "$STAGE/"
   rm -rf "$tmp"
 }
