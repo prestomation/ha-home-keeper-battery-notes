@@ -103,5 +103,5 @@ integration tier uses) and `HK_REF` in `ci/fetch-upstreams.sh` (the real integra
 the docker tier installs). Both should point at a Home Keeper release tag, so a
 release of this glue is tested against a Home Keeper a user can install. Today both
 name the same commit SHA, `039b9f7e02aaa1f1f059ad49efa95e5d3f33ab4e`, because the
-contract has no release yet. Move both to the `v0.24.0b8` tag, in one PR, once Home
+contract has no release yet. Move both to the `v0.24.0b9` tag, in one PR, once Home
 Keeper publishes it.

@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)"
 STAGE="$ROOT/tests/docker/custom_components"
 HK_REPO="${HK_REPO:-https://github.com/prestomation/ha-home-keeper}"
 # Pinned to the commit of ha-home-keeper#349 (managed appliances), the same ref
-# requirements-test.txt names. Move both to the v0.24.0b8 tag once Home Keeper
+# requirements-test.txt names. Move both to the v0.24.0b9 tag once Home Keeper
 # releases it.
 HK_REF="${HK_REF:-039b9f7e02aaa1f1f059ad49efa95e5d3f33ab4e}"
 # Battery Notes — the integration this glue bridges to.
