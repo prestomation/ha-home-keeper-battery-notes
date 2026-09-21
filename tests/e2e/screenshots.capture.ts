@@ -172,7 +172,7 @@ test('capture the battery stock', async ({ page, request }) => {
   await expect(owner).toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(800);
   await page.screenshot({
-    path: `${OUT}/battery-stock-appliance-narrow.png`,
+    path: `${OUT}/stock-panel-mobile-batteries.png`,
     fullPage: true,
   });
   await page.setViewportSize(DESKTOP);
@@ -202,7 +202,7 @@ test('capture the battery stock', async ({ page, request }) => {
   );
   await page.waitForTimeout(600);
   await page.screenshot({
-    path: `${OUT}/battery-stock-task-chip-narrow.png`,
+    path: `${OUT}/stock-panel-mobile-task-page.png`,
     fullPage: true,
   });
   await page.setViewportSize(DESKTOP);
