@@ -122,5 +122,5 @@ async def _remove_battery_appliance(hass: HomeAssistant) -> None:
                 {"asset_id": asset["id"], "force": True},
                 blocking=True,
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOGGER.debug("Could not release the battery appliance", exc_info=True)
