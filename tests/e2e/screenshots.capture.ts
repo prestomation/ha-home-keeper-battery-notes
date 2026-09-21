@@ -163,7 +163,7 @@ test('capture the battery stock', async ({ page, request }) => {
   await expect(owner).toBeVisible({ timeout: 20_000 });
   await expect(panel.getByText('Used by', { exact: false }).first()).toBeVisible();
   await page.waitForTimeout(800);
-  await page.screenshot({ path: `${OUT}/stock-1-batteries-appliance.png`, fullPage: true });
+  await page.screenshot({ path: `${OUT}/battery-stock-appliance.png`, fullPage: true });
 
   // The same page on a phone, where the panel draws a different layout.
   await page.setViewportSize(PHONE);
@@ -172,7 +172,7 @@ test('capture the battery stock', async ({ page, request }) => {
   await expect(owner).toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(800);
   await page.screenshot({
-    path: `${OUT}/stock-1b-mobile-batteries-appliance.png`,
+    path: `${OUT}/battery-stock-mobile-appliance.png`,
     fullPage: true,
   });
   await page.setViewportSize(DESKTOP);
@@ -187,7 +187,7 @@ test('capture the battery stock', async ({ page, request }) => {
   await expect(chip).toContainText('Takes 1 AAA', { timeout: 20_000 });
   await expect(chip).toContainText('4 left');
   await page.waitForTimeout(600);
-  await page.screenshot({ path: `${OUT}/stock-2-task-stock-chip.png`, fullPage: true });
+  await page.screenshot({ path: `${OUT}/battery-stock-task-chip.png`, fullPage: true });
 
   // On a phone the same chip is shot on the task's own page: in the list it sits
   // behind the fixed bottom tab bar, which a full-page capture draws across the row.
@@ -202,7 +202,7 @@ test('capture the battery stock', async ({ page, request }) => {
   );
   await page.waitForTimeout(600);
   await page.screenshot({
-    path: `${OUT}/stock-2b-mobile-task-stock-chip.png`,
+    path: `${OUT}/battery-stock-mobile-task-chip.png`,
     fullPage: true,
   });
   await page.setViewportSize(DESKTOP);

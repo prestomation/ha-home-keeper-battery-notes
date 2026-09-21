@@ -141,11 +141,11 @@ reaches that point.
 A *"Charge battery"* task takes nothing off a count. You charged the battery, so no
 spare left the drawer, and a rechargeable is not a type the appliance holds.
 
-![The Batteries appliance in Home Keeper, with a part for AA and a part for AAA](docs/images/stock-1-batteries-appliance.png)
+![The Batteries appliance in Home Keeper, with a part for AA and a part for AAA](docs/images/battery-stock-appliance.png)
 
 The task says what it takes and what is left:
 
-![A replacement task with a "Takes 1 AAA · 4 left" chip](docs/images/stock-2-task-stock-chip.png)
+![A replacement task with a "Takes 1 AAA · 4 left" chip](docs/images/battery-stock-task-chip.png)
 
 ### Options
 
