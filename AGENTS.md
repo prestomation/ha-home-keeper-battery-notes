@@ -95,11 +95,13 @@ The mechanics are in [RELEASE.md](RELEASE.md). The rules an agent has to apply:
 ## Home Keeper pin
 
 This glue needs Home Keeper's `triggered` task type, which first shipped in Home
-Keeper 0.3.0. Two places select the Home Keeper the tests run against: the
-`home-keeper` requirement in `requirements-test.txt` (the fake the integration tier
-uses) and `HK_REF` in `ci/fetch-upstreams.sh` (the real integration the docker tier
-installs). Both should point at a Home Keeper release tag, so a release of this glue
-is tested against a Home Keeper a user can install. Today they do not — the
-requirement pins a commit SHA and `HK_REF` defaults to `main`, so CI drifts with Home
-Keeper's unreleased work. Repin both to the same tag, in one PR, before relying on
-either for a release.
+Keeper 0.3.0, and the managed-appliance contract behind the battery stock
+(`update_managed_asset`, `add_asset` with `managed_by`, `set_task_consumable.quantity`),
+which is in ha-home-keeper#349. Two places select the Home Keeper the tests run
+against: the `home-keeper` requirement in `requirements-test.txt` (the fake the
+integration tier uses) and `HK_REF` in `ci/fetch-upstreams.sh` (the real integration
+the docker tier installs). Both should point at a Home Keeper release tag, so a
+release of this glue is tested against a Home Keeper a user can install. Today both
+name the same commit SHA, `039b9f7e02aaa1f1f059ad49efa95e5d3f33ab4e`, because the
+contract has no release yet. Move both to the `v0.24.0b9` tag, in one PR, once Home
+Keeper publishes it.

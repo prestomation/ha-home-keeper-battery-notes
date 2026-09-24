@@ -24,6 +24,9 @@ mobile app, and is recorded when you do it.
 - **Rechargeable?** → it can raise a **"Charge battery: …"** task instead, for the
   devices you top up rather than re-cell (radiator valves, smart locks). See
   [Rechargeable batteries](#rechargeable-batteries).
+- **Spares in the drawer** → Home Keeper keeps a **Batteries** appliance with one part
+  per battery type, and a replaced battery comes off the count. See
+  [Battery stock](#battery-stock).
 - **You replace it, from either side** → the two stay in sync (check the task off in Home
   Keeper, or press Battery Notes' *Battery Replaced* button / let the level recover).
 - **Between low events the task is dormant** — it leaves the to-do list and calendar and
@@ -73,6 +76,8 @@ this bridge to anyone who has Battery Notes installed but hasn't added it yet.
 - **Charge task name template** — default `Charge battery: {device_name}`.
 - **Flag batteries that stop reporting** — also flag a battery that's gone silent (default **off**; see below).
 - **Days with no report before flagging** — staleness threshold for the option above (default `3`).
+- **Keep a battery count in Home Keeper** — keep a **Batteries** appliance with one part per battery type (default on; see below).
+- **Name of the battery appliance** — default `Batteries`.
 
 ## Rechargeable batteries
 
@@ -117,6 +122,48 @@ why nothing is pushed back to Battery Notes:
 > Lock` task's `button.hallway_lock_replace_battery_hallway_lock_mark_done` becomes
 > `…_charge_battery_…` — so update any automation or dashboard card that points at one.
 > Only rechargeables are touched; disposable-cell tasks are never affected.
+
+## Battery stock
+
+Home Keeper gets an appliance called **Batteries** with one part for each battery type
+Battery Notes reports. A part carries the count of spares you hold, and the *"Used by"*
+line on it names the devices that take that type.
+
+Battery Notes owns the appliance name and the part list. You own every number on a
+part: the count, the reorder point, the pack size and the buy-task switch. A new type
+starts **not counted**, so Home Keeper asks for nothing until you press **Start
+counting** on the part and enter what is in the drawer.
+
+Each *"Replace battery"* task takes the number of cells its device holds off the count
+when you complete it. A device with 2 AAA batteries takes 2. Set a reorder point on the
+part and turn on its buy task, and Home Keeper opens a **"Buy AAA"** task when the count
+reaches that point.
+
+A *"Charge battery"* task takes nothing off a count. You charged the battery, so no
+spare left the drawer, and a rechargeable is not a type the appliance holds.
+
+![The Batteries appliance in Home Keeper, with a part for AA and a part for AAA](docs/images/battery-stock-appliance.png)
+
+The task says what it takes and what is left:
+
+![A replacement task with a "Takes 1 AAA · 4 left" chip](docs/images/battery-stock-task-chip.png)
+
+### Options
+
+- **Keep a battery count in Home Keeper** — default **on**. Turn it off and the
+  appliance stays as it is, with your counts.
+- **Name of the battery appliance** — default `Batteries`.
+
+### Limitations
+
+- **A device with 2 Battery Notes entries counts in both types**, but its task takes
+  cells off one part only: the type the device holds most of.
+- **A count does not travel in a Home Keeper export.** Home Keeper leaves an appliance
+  an integration owns out of the import and export document, so a restore from an
+  export starts the counts empty. Battery Notes rebuilds the appliance and its parts
+  at the next reconcile.
+- **Remove this integration and the appliance stays** with your counts, as a plain
+  appliance you own. An appliance with no counts goes with the integration.
 
 ## Dead / non-reporting batteries
 

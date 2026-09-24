@@ -38,6 +38,8 @@ from .const import (
     DEFAULT_CLEAR_ON_RECOVERY,
     DEFAULT_NAME_TEMPLATE,
     DEFAULT_NOT_REPORTED_DAYS,
+    DEFAULT_STOCK_APPLIANCE_NAME,
+    DEFAULT_STOCK_ENABLED,
     DEFAULT_TREAT_NOT_REPORTED,
     DEFAULT_TWO_WAY,
     DOMAIN,
@@ -51,12 +53,18 @@ from .const import (
     HK_DOMAIN,
     HK_EVENT_REGISTER_COMPANIONS,
     HK_EVENT_TASK_COMPLETED,
+    HK_SERVICE_ADD_ASSET,
+    HK_SERVICE_LIST_ASSETS,
     HK_SERVICE_REGISTER_COMPANION,
+    HK_SERVICE_SET_TASK_CONSUMABLE,
+    HK_SERVICE_UPDATE_MANAGED_ASSET,
     KIND_CHARGE,
     OPT_CHARGE_NAME_TEMPLATE,
     OPT_CLEAR_ON_RECOVERY,
     OPT_NAME_TEMPLATE,
     OPT_NOT_REPORTED_DAYS,
+    OPT_STOCK_APPLIANCE_NAME,
+    OPT_STOCK_ENABLED,
     OPT_TREAT_NOT_REPORTED,
     OPT_TWO_WAY,
     ORIGIN,
@@ -101,6 +109,12 @@ class BatteryNotesGlue:
         self._lock = asyncio.Lock()
         # Set while we're waiting for HA to finish starting; see _cancel_start_listener.
         self._cancel_started: CALLBACK_TYPE | None = None
+        # What a Battery Notes event said about a device the entity registry has no
+        # battery sensor for. The registry is the source of truth and wins on every
+        # device it holds; this only fills the gap between an event and the entity
+        # behind it, so the battery pool does not lose a type between two events. It
+        # is memory only, and a restart rebuilds it from the registry.
+        self._event_devices: dict[str, dict[str, Any]] = {}
 
     # ── options ──────────────────────────────────────────────────────────────
     @property
@@ -136,6 +150,17 @@ class BatteryNotesGlue:
         return self.entry.options.get(
             OPT_CHARGE_NAME_TEMPLATE, DEFAULT_CHARGE_NAME_TEMPLATE
         )
+
+    @property
+    def _stock_enabled(self) -> bool:
+        return self.entry.options.get(OPT_STOCK_ENABLED, DEFAULT_STOCK_ENABLED)
+
+    @property
+    def _stock_appliance_name(self) -> str:
+        name = self.entry.options.get(
+            OPT_STOCK_APPLIANCE_NAME, DEFAULT_STOCK_APPLIANCE_NAME
+        )
+        return str(name).strip() or DEFAULT_STOCK_APPLIANCE_NAME
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     async def async_setup(self) -> None:
@@ -206,7 +231,14 @@ class BatteryNotesGlue:
         await self._check_not_reported()
 
     async def _on_register_request(self, _event: Event) -> None:
+        """Home Keeper asked its companions to announce themselves.
+
+        Home Keeper fires this at its own setup, which is the one moment we know its
+        services are there. Reconcile as well as register, so a Home Keeper that
+        started after us gets the tasks and the battery stock it missed.
+        """
         await self._register_companion()
+        await self._reconcile()
 
     async def _register_companion(self) -> None:
         """Announce this glue to Home Keeper's companion registry (best-effort)."""
@@ -248,13 +280,31 @@ class BatteryNotesGlue:
         )
         return list((resp or {}).get("tasks", []))
 
-    async def _execute(self, action: logic.Action) -> None:
+    async def _list_assets(self) -> list[dict[str, Any]]:
+        if not self._hk_ready(HK_SERVICE_LIST_ASSETS):
+            return []
+        resp = await self.hass.services.async_call(
+            HK_DOMAIN, HK_SERVICE_LIST_ASSETS, {}, blocking=True, return_response=True
+        )
+        return list((resp or {}).get("assets", []))
+
+    async def _execute(self, action: logic.Action | logic.StockAction) -> None:
         if isinstance(action, logic.CreateTask):
             if self._hk_ready("add_task"):
-                await self.hass.services.async_call(
-                    HK_DOMAIN, "add_task", action.payload, blocking=True
+                # ``return_response`` so the caller has the new task's id straight
+                # away: the stock pass that follows links it to its battery type.
+                resp = await self.hass.services.async_call(
+                    HK_DOMAIN,
+                    "add_task",
+                    action.payload,
+                    blocking=True,
+                    return_response=True,
                 )
-                _LOGGER.debug("Created battery task for device %s", action.device_id)
+                _LOGGER.debug(
+                    "Created battery task %s for device %s",
+                    (resp or {}).get("task_id"),
+                    action.device_id,
+                )
         elif isinstance(action, logic.ArmTask):
             if self._hk_ready("trigger_task"):
                 await self.hass.services.async_call(
@@ -308,6 +358,55 @@ class BatteryNotesGlue:
                 blocking=True,
             )
             _LOGGER.debug("Updated chips on battery task %s", action.task_id)
+        elif isinstance(action, logic.EnsureAsset):
+            await self._call_stock(HK_SERVICE_ADD_ASSET, action.payload)
+            _LOGGER.debug("Created the battery appliance")
+        elif isinstance(action, logic.UpdateManagedAsset):
+            data: dict[str, Any] = {"asset_id": action.asset_id}
+            if action.name is not None:
+                data["name"] = action.name
+            if action.parts is not None:
+                data["parts"] = action.parts
+            await self._call_stock(HK_SERVICE_UPDATE_MANAGED_ASSET, data)
+            _LOGGER.debug("Updated the battery appliance %s", action.asset_id)
+        elif isinstance(action, logic.LinkConsumable):
+            await self._call_stock(
+                HK_SERVICE_SET_TASK_CONSUMABLE,
+                {
+                    "task_id": action.task_id,
+                    "asset_id": action.asset_id,
+                    "part_id": action.part_id,
+                    "quantity": action.quantity,
+                },
+            )
+            _LOGGER.debug(
+                "Task %s now takes %s from part %s",
+                action.task_id,
+                action.quantity,
+                action.part_id,
+            )
+        elif isinstance(action, logic.UnlinkConsumable):
+            await self._call_stock(
+                HK_SERVICE_SET_TASK_CONSUMABLE,
+                {"task_id": action.task_id, "asset_id": None, "part_id": None},
+            )
+            _LOGGER.debug(
+                "Task %s no longer takes a battery off the count", action.task_id
+            )
+
+    async def _call_stock(self, service: str, data: dict[str, Any]) -> None:
+        """Call one of Home Keeper's appliance services, if it has it.
+
+        A Home Keeper without the appliance contract simply has no such service, and
+        the glue stays on its task behaviour. A call Home Keeper refuses is logged
+        and dropped: a battery task must not be lost because a count was not written.
+        """
+        if not self._hk_ready(service):
+            return
+        try:
+            await self.hass.services.async_call(HK_DOMAIN, service, data, blocking=True)
+        except (HomeAssistantError, ValueError) as err:
+            _LOGGER.warning("home_keeper.%s failed: %s", service, err)
 
     # ── Battery Notes event handlers ─────────────────────────────────────────
     async def _on_threshold(self, event: Event) -> None:
@@ -334,8 +433,15 @@ class BatteryNotesGlue:
                 action = logic.plan_battery_cleared(tasks, device_id=device_id)
             else:
                 action = None
+            self._learn_from_event(dict(data))
             if action is not None:
                 await self._execute(action)
+                # Only after a task really changed. Battery Notes re-fires a threshold
+                # event on every coordinator refresh, and a pass over an unchanged task
+                # would ask Home Keeper for its appliances and its tasks each time.
+                await self._reconcile_stock(
+                    self._stock_devices(self._scan_battery_sensors()[3])
+                )
 
     async def _on_replaced(self, event: Event) -> None:
         device_id = event.data.get(FIELD_DEVICE_ID)
@@ -374,8 +480,12 @@ class BatteryNotesGlue:
                 charge_name_template=self._charge_name_template,
                 rechargeable_mode=self._rechargeable_mode,
             )
+            self._learn_from_event(dict(event.data))
             if action is not None:
                 await self._execute(action)
+                await self._reconcile_stock(
+                    self._stock_devices(self._scan_battery_sensors()[3])
+                )
 
     async def _check_not_reported(self, _now: Any = None) -> None:
         """Ask Battery Notes which batteries have stopped reporting.
@@ -457,7 +567,7 @@ class BatteryNotesGlue:
         if not self._hk_ready("list_tasks"):
             return
         async with self._lock:
-            low_devices, recovered_devices, rechargeable_devices = (
+            low_devices, recovered_devices, rechargeable_devices, all_devices = (
                 self._scan_battery_sensors()
             )
             tasks = await self._list_tasks()
@@ -479,13 +589,82 @@ class BatteryNotesGlue:
                 await self._execute(action)
             if actions:
                 _LOGGER.debug("Reconcile applied %d action(s)", len(actions))
+            await self._reconcile_stock(self._stock_devices(all_devices))
+
+    # ── battery stock ────────────────────────────────────────────────────────
+    async def _reconcile_stock(self, devices: dict[str, dict[str, Any]]) -> None:
+        """Converge the battery appliance and the consumable link on every task.
+
+        Runs after the task actions, so a task created in this pass is linked in the
+        same pass. The plan is re-read once after a write to the appliance, because a
+        part gets its id from Home Keeper and a task can only link to a stored part.
+        The caller holds the lock.
+        """
+        if not self._stock_enabled or not self._hk_ready(HK_SERVICE_LIST_ASSETS):
+            return
+        try:
+            for _pass in range(2):
+                actions = logic.plan_stock_reconcile(
+                    await self._list_assets(),
+                    await self._list_tasks(),
+                    devices,
+                    config_entry_id=self.entry.entry_id,
+                    appliance_name=self._stock_appliance_name,
+                )
+                if not actions:
+                    return
+                for action in actions:
+                    await self._execute(action)
+                _LOGGER.debug("Battery stock applied %d action(s)", len(actions))
+                if not any(
+                    isinstance(action, (logic.EnsureAsset, logic.UpdateManagedAsset))
+                    for action in actions
+                ):
+                    return
+        except (HomeAssistantError, ValueError) as err:
+            # The stock pass is a bonus on top of the task flow. A Home Keeper that
+            # refuses a read here must not turn into an error in the event listener
+            # that created or armed the task a moment ago.
+            _LOGGER.warning("Battery stock pass skipped: %s", err)
+
+    def _learn_from_event(self, data: dict[str, Any]) -> None:
+        """Remember what a Battery Notes event said about a device's battery."""
+        device_id = data.get(FIELD_DEVICE_ID)
+        battery_type = data.get(FIELD_BATTERY_TYPE)
+        if not device_id or not battery_type:
+            return
+        battery = {
+            "battery_type": battery_type,
+            "battery_quantity": data.get(FIELD_BATTERY_QUANTITY),
+            "rechargeable": logic.is_rechargeable(battery_type),
+        }
+        self._event_devices[device_id] = {
+            "name": data.get(FIELD_DEVICE_NAME) or device_id,
+            **battery,
+            "batteries": [battery],
+        }
+
+    def _stock_devices(
+        self, scanned: dict[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """The device snapshot a stock pass reads: the registry, then the events."""
+        devices = dict(scanned)
+        for device_id, record in self._event_devices.items():
+            devices.setdefault(device_id, record)
+        return devices
 
     def _scan_battery_sensors(
         self,
-    ) -> tuple[dict[str, dict[str, Any]], set[str], frozenset[str]]:
+    ) -> tuple[
+        dict[str, dict[str, Any]],
+        set[str],
+        frozenset[str],
+        dict[str, dict[str, Any]],
+    ]:
         """Snapshot Battery Notes' battery-low sensors for a reconcile.
 
-        Returns ``(low, recovered, rechargeable)``: *low* maps ``device_id`` → battery
+        Returns ``(low, recovered, rechargeable, all_devices)``: *low* maps
+        ``device_id`` → battery
         info for sensors reading ``on`` (arm/create), *recovered* is the set of devices
         whose sensor reads ``off`` — an affirmative "reporting and not low" signal we
         clear on — and *rechargeable* is the set of devices whose battery type is
@@ -494,6 +673,11 @@ class BatteryNotesGlue:
         ``unknown``/``unavailable`` (or absent) lands in neither *low* nor *recovered*:
         that's the suspected-dead case, so we neither arm from it here (the
         not-reported path, with its day threshold, handles that) nor clear on it.
+
+        *all_devices* is every Battery Notes device with a battery-low sensor, in any
+        state, as ``{"name", "battery_type", "battery_quantity", "rechargeable"}`` plus
+        a ``batteries`` list for a device with 2 Battery Notes entries. The battery
+        stock reads it: a battery counts in the pool whether or not it is low today.
 
         Battery Notes splits the information across two entities, so we walk both: the
         battery-low *binary sensor* carries type/quantity, and the "battery plus"
@@ -504,6 +688,7 @@ class BatteryNotesGlue:
         low: dict[str, dict[str, Any]] = {}
         recovered: set[str] = set()
         rechargeable: set[str] = set()
+        all_devices: dict[str, dict[str, Any]] = {}
         levels: dict[str, tuple[float, str]] = {}
         for entity in ent_reg.entities.values():
             if entity.platform != BN_DOMAIN or not entity.device_id:
@@ -535,19 +720,25 @@ class BatteryNotesGlue:
             # for a device that has since recovered or gone silent.
             if logic.is_rechargeable(state.attributes.get(FIELD_BATTERY_TYPE)):
                 rechargeable.add(entity.device_id)
+            device = dev_reg.async_get(entity.device_id)
+            device_name = (device.name_by_user or device.name) if device else None
+            self._record_device(
+                all_devices,
+                entity.device_id,
+                device_name or entity.device_id,
+                state.attributes,
+            )
             if state.state == "off":
                 recovered.add(entity.device_id)
                 continue
             if state.state != "on":
                 continue
-            device = dev_reg.async_get(entity.device_id)
-            name = (device.name_by_user or device.name) if device else None
             # Battery Notes exposes battery_type/quantity as attributes on the
             # battery-low sensor, so a reconcile-created task gets the same notes as
             # one created from a live event (rather than an empty note).
             attrs = state.attributes
             low[entity.device_id] = {
-                "name": name or entity.device_id,
+                "name": device_name or entity.device_id,
                 "battery_type": attrs.get(FIELD_BATTERY_TYPE),
                 "battery_quantity": attrs.get(FIELD_BATTERY_QUANTITY),
                 "battery_level": attrs.get(FIELD_BATTERY_LEVEL),
@@ -558,4 +749,28 @@ class BatteryNotesGlue:
             if info.get("battery_level") in (None, ""):
                 found = levels.get(device_id)
                 info["battery_level"] = found[1] if found else None
-        return low, recovered, frozenset(rechargeable)
+        return low, recovered, frozenset(rechargeable), all_devices
+
+    @staticmethod
+    def _record_device(
+        devices: dict[str, dict[str, Any]],
+        device_id: str,
+        name: str,
+        attrs: Any,
+    ) -> None:
+        """Add one Battery Notes battery to the *devices* snapshot.
+
+        Battery Notes allows 2 entries on one device, which is 2 battery-low sensors
+        with one device id. The second battery joins the first in the record's
+        ``batteries`` list, so both types count in the stock.
+        """
+        battery = {
+            "battery_type": attrs.get(FIELD_BATTERY_TYPE),
+            "battery_quantity": attrs.get(FIELD_BATTERY_QUANTITY),
+            "rechargeable": logic.is_rechargeable(attrs.get(FIELD_BATTERY_TYPE)),
+        }
+        record = devices.get(device_id)
+        if record is None:
+            devices[device_id] = {"name": name, **battery, "batteries": [battery]}
+            return
+        record["batteries"].append(battery)

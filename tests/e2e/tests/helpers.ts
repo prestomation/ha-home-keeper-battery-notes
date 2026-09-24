@@ -146,3 +146,75 @@ export function trackPanelErrors(page: Page): string[] {
   });
   return errors;
 }
+
+/** The glue's battery appliance in Home Keeper, or null — matched by our source ns. */
+export async function glueAsset(
+  request: APIRequestContext,
+): Promise<{ id: string; name: string; parts: Record<string, any>[] } | null> {
+  const r = await request.post(`${HA_URL}/api/services/home_keeper/list_assets?return_response`, {
+    headers: authHeaders(),
+    data: {},
+  });
+  if (!r.ok()) return null;
+  const body = (await r.json()) as { service_response: { assets: Record<string, any>[] } };
+  const match = body.service_response.assets.find(
+    (a) => a?.source?.home_keeper_battery_notes?.role === 'battery_stock',
+  );
+  return match ? { id: match.id, name: match.name, parts: match.parts || [] } : null;
+}
+
+/** Wait for the appliance to carry a part for each of *names*. */
+export async function waitForParts(
+  request: APIRequestContext,
+  names: string[],
+  tries = 20,
+): Promise<{ id: string; name: string; parts: Record<string, any>[] }> {
+  for (let i = 0; i < tries; i++) {
+    const asset = await glueAsset(request);
+    const have = (asset?.parts || []).map((p) => p.name);
+    if (asset && names.every((name) => have.includes(name))) return asset;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`the battery appliance never carried ${names.join(', ')}`);
+}
+
+/** Count the spares on a part, the way a user does in the panel. */
+export async function setPartStock(
+  request: APIRequestContext,
+  assetId: string,
+  part: Record<string, any>,
+  stock: number,
+  reorderAt: number,
+): Promise<void> {
+  const r = await request.post(`${HA_URL}/api/services/home_keeper/update_asset`, {
+    headers: authHeaders(),
+    data: {
+      asset_id: assetId,
+      parts: [{ id: part.id, name: part.name, stock, reorder_at: reorderAt }],
+    },
+  });
+  expect(r.ok(), `counting the spares failed: ${r.status()}`).toBeTruthy();
+}
+
+/** Wait until the glue has linked *deviceId*'s task to a battery part. */
+export async function waitForTaskLink(
+  request: APIRequestContext,
+  deviceId: string,
+  tries = 20,
+): Promise<Record<string, any>> {
+  for (let i = 0; i < tries; i++) {
+    const r = await request.post(`${HA_URL}/api/services/home_keeper/list_tasks?return_response`, {
+      headers: authHeaders(),
+      data: {},
+    });
+    if (r.ok()) {
+      const body = (await r.json()) as { service_response: { tasks: Record<string, any>[] } };
+      const match = body.service_response.tasks.find(
+        (t) => t?.source?.home_keeper_battery_notes?.device_id === deviceId && t?.source?.part,
+      );
+      if (match) return match;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`the task for ${deviceId} was never linked to a battery part`);
+}

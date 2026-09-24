@@ -2,7 +2,8 @@
 
 A single instance is all that's needed (it watches all Battery Notes devices), so the
 config flow is a one-click confirm. Behaviour is tuned in the options flow: the task
-name templates, two-way sync, clear-on-recovery, and what a rechargeable battery earns.
+name templates, two-way sync, clear-on-recovery, what a rechargeable battery earns,
+and the battery stock.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ from .const import (
     DEFAULT_CLEAR_ON_RECOVERY,
     DEFAULT_NAME_TEMPLATE,
     DEFAULT_NOT_REPORTED_DAYS,
+    DEFAULT_STOCK_APPLIANCE_NAME,
+    DEFAULT_STOCK_ENABLED,
     DEFAULT_TREAT_NOT_REPORTED,
     DEFAULT_TWO_WAY,
     DOMAIN,
@@ -37,6 +40,8 @@ from .const import (
     OPT_NAME_TEMPLATE,
     OPT_NOT_REPORTED_DAYS,
     OPT_RECHARGEABLE_MODE,
+    OPT_STOCK_APPLIANCE_NAME,
+    OPT_STOCK_ENABLED,
     OPT_TREAT_NOT_REPORTED,
     OPT_TWO_WAY,
     RECHARGEABLE_MODES,
@@ -66,7 +71,7 @@ class BatteryNotesGlueConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class BatteryNotesGlueOptionsFlow(OptionsFlow):
-    """Options: name templates, two-way sync, clear-on-recovery, rechargeable mode."""
+    """Options: name templates, sync, rechargeable mode, and the battery stock."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -120,6 +125,16 @@ class BatteryNotesGlueOptionsFlow(OptionsFlow):
                         OPT_NOT_REPORTED_DAYS, DEFAULT_NOT_REPORTED_DAYS
                     ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=1)),
+                vol.Optional(
+                    OPT_STOCK_ENABLED,
+                    default=opts.get(OPT_STOCK_ENABLED, DEFAULT_STOCK_ENABLED),
+                ): bool,
+                vol.Optional(
+                    OPT_STOCK_APPLIANCE_NAME,
+                    default=opts.get(
+                        OPT_STOCK_APPLIANCE_NAME, DEFAULT_STOCK_APPLIANCE_NAME
+                    ),
+                ): str,
             }
         )
         return self.async_show_form(

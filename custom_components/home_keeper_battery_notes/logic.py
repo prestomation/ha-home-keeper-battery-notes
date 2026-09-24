@@ -21,10 +21,14 @@ startup reconciliation never create duplicates or loops.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
 from .const import (
+    ASSET_ICON,
+    ASSET_LOCKED_FIELDS,
+    ASSET_ROLE_STOCK,
     CHARGE_CHIP_ICON,
     CHARGE_COMPLETION_PROMPT,
     CHIP_ICON,
@@ -39,11 +43,14 @@ from .const import (
     MANAGED_ICON,
     OPT_RECHARGEABLE_MODE,
     OPT_SKIP_RECHARGEABLE,
+    PART_TYPE_CONSUMABLE,
     RECHARGEABLE_BATTERY_TYPE,
     RECHARGEABLE_MODE_CHARGE,
     RECHARGEABLE_MODE_SKIP,
     RECHARGEABLE_MODES,
     SOURCE_NS,
+    USAGE_NOTE_MAX_NAMES,
+    USAGE_NOTE_NONE,
 )
 
 
@@ -479,4 +486,376 @@ def plan_reconcile(
             continue
         if device_id in recovered_devices and is_armed(task):
             actions.append(ClearTask(task["id"], device_id))
+    return actions
+
+
+# ── battery stock: the appliance we keep in Home Keeper ──────────────────────
+# Home Keeper holds spares as *parts* of an appliance, and an integration can own an
+# appliance and its part list (docs/INTEGRATING.md §8). The glue keeps one virtual
+# appliance — "Batteries" by default — with one consumable part per battery type it
+# sees. The user keeps every count on those parts, and Home Keeper takes the quantity
+# a device holds off the count when its replace task is completed.
+#
+# Everything below is pure: it reads the appliance list, the task list and a snapshot
+# of the Battery Notes devices, and returns the actions ``wiring.py`` runs.
+
+
+@dataclass(frozen=True)
+class EnsureAsset:
+    """Create the battery appliance (call ``home_keeper.add_asset``)."""
+
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class UpdateManagedAsset:
+    """Write the appliance fields we own (``home_keeper.update_managed_asset``).
+
+    *name* re-applies the appliance name from the option, *parts* is the whole part
+    list as we want it. Home Keeper matches a part on its ``id``, so each stored part
+    echoes its own id back; a part with no id is a new one, and it starts untracked.
+    """
+
+    asset_id: str
+    name: str | None = None
+    parts: list[dict[str, Any]] | None = None
+
+
+@dataclass(frozen=True)
+class LinkConsumable:
+    """Link a replace task to its battery type (``home_keeper.set_task_consumable``).
+
+    *quantity* is what one completion takes off the count: the number of cells the
+    device holds.
+    """
+
+    task_id: str
+    asset_id: str
+    part_id: str
+    quantity: float
+
+
+@dataclass(frozen=True)
+class UnlinkConsumable:
+    """Drop a task's consumable link (``set_task_consumable`` with empty ids)."""
+
+    task_id: str
+
+
+StockAction = EnsureAsset | UpdateManagedAsset | LinkConsumable | UnlinkConsumable
+
+
+def normalize_battery_type(raw: Any) -> str | None:
+    """The display spelling of a battery type, or ``None`` when there is none.
+
+    Battery Notes reports the type as free text, so ``"AAA"``, ``" aaa "`` and
+    ``"AAA "`` all name one battery. The text is trimmed and its inner runs of
+    whitespace collapse to single spaces; :func:`battery_type_key` then folds the case
+    for the match. A value that is not a string, or is empty, has no type.
+    """
+    if not isinstance(raw, str):
+        return None
+    collapsed = " ".join(raw.split())
+    return collapsed or None
+
+
+def battery_type_key(display: str) -> str:
+    """The match key for a battery type: its display spelling, case folded."""
+    return display.casefold()
+
+
+def _quantity(value: Any) -> float:
+    """How many cells a device holds: a positive number, or 1 when it says nothing."""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return 1
+    if not math.isfinite(amount) or amount <= 0:
+        return 1
+    return int(amount) if amount.is_integer() else amount
+
+
+def device_batteries(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every battery a device record describes.
+
+    Battery Notes allows 2 entries on one device, so a record can carry a
+    ``batteries`` list. A record without one describes a single battery in its own
+    ``battery_type``/``battery_quantity``/``rechargeable`` fields.
+    """
+    batteries = record.get("batteries")
+    if isinstance(batteries, list) and batteries:
+        return [b for b in batteries if isinstance(b, dict)]
+    return [record]
+
+
+def _pool_batteries(record: dict[str, Any]) -> list[tuple[str, float]]:
+    """The ``(type, quantity)`` pairs of *record* that belong in the battery pool.
+
+    A rechargeable is left out. It is charged, not replaced, so it is no spare to
+    keep in a drawer, and its Battery Notes type reads ``Rechargeable`` for every
+    device that has one.
+    """
+    pool: list[tuple[str, float]] = []
+    for battery in device_batteries(record):
+        if is_rechargeable(battery.get("battery_type")):
+            continue
+        display = normalize_battery_type(battery.get("battery_type"))
+        if display is None:
+            continue
+        pool.append((display, _quantity(battery.get("battery_quantity"))))
+    return pool
+
+
+def _format_quantity(value: float) -> str:
+    """A quantity as it reads in the usage note (``2``, not ``2.0``)."""
+    return str(int(value)) if float(value).is_integer() else str(value)
+
+
+def usage_note(entries: list[tuple[str, float]]) -> str:
+    """The part notes naming the devices that hold a battery type.
+
+    *entries* is one ``(device name, quantity)`` pair per device. The text reads
+    ``Used by 4 devices · 7 installed — Front door sensor (2), Hall remote (2)``, with
+    the names in alphabetical order. After :data:`USAGE_NOTE_MAX_NAMES` names the rest
+    are counted as ``+N more``. An empty list gives :data:`USAGE_NOTE_NONE`.
+    """
+    if not entries:
+        return USAGE_NOTE_NONE
+    ordered = sorted(entries, key=lambda item: (item[0].casefold(), item[0]))
+    devices = len(ordered)
+    installed = sum(quantity for _name, quantity in ordered)
+    head = (
+        f"Used by {devices} device{'' if devices == 1 else 's'}"
+        f" · {_format_quantity(installed)} installed"
+    )
+    shown = ordered[:USAGE_NOTE_MAX_NAMES]
+    names = [f"{name} ({_format_quantity(quantity)})" for name, quantity in shown]
+    remaining = devices - len(shown)
+    if remaining:
+        names.append(f"+{remaining} more")
+    return f"{head} — {', '.join(names)}"
+
+
+def _usage_by_type(devices: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Group the devices by battery type.
+
+    The result maps the type key to ``{"display": …, "entries": [(name, quantity)]}``.
+    The display spelling is the first one seen, in device order. A device with 2
+    entries of one type counts once, with the quantities added.
+    """
+    grouped: dict[str, dict[str, Any]] = {}
+    for device_id, record in devices.items():
+        name = str(record.get("name") or device_id)
+        per_type: dict[str, float] = {}
+        for display, quantity in _pool_batteries(record):
+            key = battery_type_key(display)
+            grouped.setdefault(key, {"display": display, "entries": []})
+            per_type[key] = per_type.get(key, 0) + quantity
+        for key, quantity in per_type.items():
+            grouped[key]["entries"].append((name, quantity))
+    return grouped
+
+
+def desired_parts(
+    devices: dict[str, dict[str, Any]], existing: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The part list we want on the appliance: one consumable part per battery type.
+
+    Each part carries the id of the stored part with the same name, so Home Keeper
+    updates that part rather than making a second one. A type that no device uses now
+    is dropped, unless the user counted it: such a part is kept, with
+    :data:`USAGE_NOTE_NONE` for its notes, because the spares are still in the drawer.
+    """
+    stored_by_key = {
+        battery_type_key(str(part.get("name") or "")): part for part in existing
+    }
+    grouped = _usage_by_type(devices)
+    parts: list[dict[str, Any]] = []
+    for key in sorted(grouped):
+        bucket = grouped[key]
+        stored = stored_by_key.get(key)
+        part: dict[str, Any] = {
+            "name": str((stored or {}).get("name") or bucket["display"]),
+            "type": PART_TYPE_CONSUMABLE,
+            "notes": usage_note(bucket["entries"]),
+        }
+        if stored and stored.get("id"):
+            part["id"] = str(stored["id"])
+        parts.append(part)
+    for key, stored in stored_by_key.items():
+        if key in grouped or stored.get("stock") is None:
+            continue
+        parts.append(
+            {
+                "id": str(stored["id"]),
+                "name": str(stored.get("name") or ""),
+                "type": PART_TYPE_CONSUMABLE,
+                "notes": USAGE_NOTE_NONE,
+            }
+        )
+    return parts
+
+
+def build_asset_managed_by(config_entry_id: str) -> dict[str, Any]:
+    """The ownership block Home Keeper records on our appliance."""
+    return {
+        "integration": SOURCE_NS,
+        "display_name": MANAGED_DISPLAY_NAME,
+        "icon": ASSET_ICON,
+        "config_entry_id": config_entry_id,
+        "deletion_protected": True,
+        "locked_fields": list(ASSET_LOCKED_FIELDS),
+    }
+
+
+def build_asset_payload(
+    name: str,
+    config_entry_id: str,
+    parts: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The ``home_keeper.add_asset`` payload for the battery appliance.
+
+    A virtual appliance, because the batteries are a pool and not one device. The
+    ``source`` namespace is how we find it again after a restart.
+    """
+    return {
+        "name": name,
+        "kind": "virtual",
+        "icon": ASSET_ICON,
+        "parts": [dict(part) for part in (parts or [])],
+        "source": {SOURCE_NS: {"role": ASSET_ROLE_STOCK}},
+        "managed_by": build_asset_managed_by(config_entry_id),
+    }
+
+
+def find_our_asset(assets: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Our battery appliance in *assets*, matched by our ``source`` namespace."""
+    for asset in assets:
+        if not isinstance(asset, dict) or not asset.get("id"):
+            continue
+        src = (asset.get("source") or {}).get(SOURCE_NS)
+        if isinstance(src, dict) and src.get("role") == ASSET_ROLE_STOCK:
+            return asset
+    return None
+
+
+def _parts_differ(stored: list[dict[str, Any]], wanted: list[dict[str, Any]]) -> bool:
+    """Whether the appliance's part list needs a write.
+
+    Only the keys we own are compared, on the parts both lists hold, plus the
+    membership of the list itself. Every stock number belongs to the user, so a
+    change to one is never a reason to write.
+    """
+    if len(stored) != len(wanted):
+        return True
+    by_id = {str(part.get("id")): part for part in stored}
+    for part in wanted:
+        current = by_id.get(str(part.get("id")))
+        if current is None:
+            return True
+        for key in ("name", "type", "notes"):
+            if str(current.get(key) or "") != str(part.get(key) or ""):
+                return True
+    return False
+
+
+def _link_of(task: dict[str, Any]) -> dict[str, Any] | None:
+    """The consumable link on *task*, or ``None`` when it has none."""
+    link = (task.get("source") or {}).get("part")
+    return link if isinstance(link, dict) else None
+
+
+def _link_matches(
+    link: dict[str, Any], asset_id: str, part_id: str, quantity: float
+) -> bool:
+    """Whether the stored link already says what we want it to say."""
+    if str(link.get("asset_id")) != asset_id or str(link.get("part_id")) != part_id:
+        return False
+    stored = link.get("quantity")
+    if stored is None:
+        return False
+    try:
+        return float(stored) == float(quantity)
+    except (TypeError, ValueError):
+        return False
+
+
+def _link_target(
+    record: dict[str, Any], parts_by_key: dict[str, dict[str, Any]]
+) -> tuple[dict[str, Any], float] | None:
+    """The part a device's replace task draws from, and how much it takes.
+
+    A device with 2 Battery Notes entries counts in the usage of both types, but one
+    task can draw from one part. It draws from the type it holds most of.
+    """
+    best: tuple[dict[str, Any], float] | None = None
+    for display, quantity in _pool_batteries(record):
+        part = parts_by_key.get(battery_type_key(display))
+        if part is None or not part.get("id"):
+            continue
+        if best is None or quantity > best[1]:
+            best = (part, quantity)
+    return best
+
+
+def plan_stock_reconcile(
+    assets: list[dict[str, Any]],
+    tasks: list[dict[str, Any]],
+    devices: dict[str, dict[str, Any]],
+    *,
+    config_entry_id: str,
+    appliance_name: str,
+) -> list[StockAction]:
+    """Converge the battery appliance and the consumable links on our tasks.
+
+    *devices* maps a device id to what Battery Notes reports for it: its name, its
+    battery type and quantity, whether the battery is rechargeable, and a ``batteries``
+    list when the device has 2 entries.
+
+    The appliance comes first. Without one, the only action is to create it, with the
+    parts it needs; the caller runs a second pass to link the tasks once the parts
+    have ids. With one, a changed appliance name or part list is a single
+    ``update_managed_asset``.
+
+    Then every replace task we own is linked to the part for its battery type, for as
+    many cells as the device holds. A charge task is never linked, because a charged
+    battery is not a spare taken out of the drawer. A task whose device or battery
+    type is gone keeps its count-free state: the link is dropped.
+    """
+    actions: list[StockAction] = []
+    asset = find_our_asset(assets)
+    stored_parts = [
+        part for part in (asset or {}).get("parts") or [] if isinstance(part, dict)
+    ]
+    wanted = desired_parts(devices, stored_parts)
+    if asset is None:
+        return [
+            EnsureAsset(build_asset_payload(appliance_name, config_entry_id, wanted))
+        ]
+
+    rename = appliance_name if str(asset.get("name") or "") != appliance_name else None
+    repart = wanted if _parts_differ(stored_parts, wanted) else None
+    if rename is not None or repart is not None:
+        actions.append(UpdateManagedAsset(str(asset["id"]), name=rename, parts=repart))
+
+    asset_id = str(asset["id"])
+    parts_by_key = {
+        battery_type_key(str(part.get("name") or "")): part for part in stored_parts
+    }
+    for task in our_tasks(tasks):
+        link = _link_of(task)
+        record = devices.get(task["source"][SOURCE_NS].get("device_id"))
+        target = (
+            _link_target(record, parts_by_key)
+            if record is not None and task_kind(task) == KIND_REPLACE
+            else None
+        )
+        if target is None:
+            if link is not None:
+                actions.append(UnlinkConsumable(task["id"]))
+            continue
+        part, quantity = target
+        part_id = str(part["id"])
+        if link is None or not _link_matches(link, asset_id, part_id, quantity):
+            actions.append(LinkConsumable(task["id"], asset_id, part_id, quantity))
     return actions

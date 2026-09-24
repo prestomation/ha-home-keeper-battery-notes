@@ -171,6 +171,36 @@ def api(token):
                 time.sleep(1)
             raise AssertionError(f"task for {device_id} never {want} (last={last!r})")
 
+        # ── appliances ───────────────────────────────────────────────────────
+        def assets(self) -> list[dict]:
+            """Every Home Keeper appliance. Retries like ``tasks`` does."""
+            last: Exception | None = None
+            for _ in range(10):
+                try:
+                    out = self.call("home_keeper", "list_assets", response=True)
+                    return list(out["service_response"]["assets"])
+                except requests.HTTPError as err:
+                    last = err
+                    time.sleep(1)
+            raise AssertionError(f"home_keeper.list_assets never succeeded: {last}")
+
+        def glue_asset(self, role: str) -> dict | None:
+            """The glue's appliance for *role*, matched by its source namespace."""
+            for asset in self.assets():
+                src = (asset.get("source") or {}).get(GLUE_DOMAIN)
+                if isinstance(src, dict) and src.get("role") == role:
+                    return asset
+            return None
+
+        def poll_asset(self, role: str, why: str, timeout: float = 30) -> dict:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                asset = self.glue_asset(role)
+                if asset is not None and asset.get("parts"):
+                    return asset
+                time.sleep(1)
+            raise AssertionError(why)
+
         def glue_task_count(self, device_id: str) -> int:
             return sum(
                 1

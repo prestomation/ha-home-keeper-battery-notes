@@ -4,6 +4,14 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
+## [0.4.0b2]
+
+### Added
+
+- **Battery stock.** Battery Notes keeps a Batteries appliance in Home Keeper with one
+  part per battery type. A replaced battery takes its quantity off the count and a low
+  count opens a Buy task.
+
 ## [0.4.0b1]
 
 ### Changed
