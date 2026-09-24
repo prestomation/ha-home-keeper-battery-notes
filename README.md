@@ -1,5 +1,6 @@
 # Home Keeper — Battery Notes
 
+[![Integration Usage][usage-shield]][usage]
 [![GitHub Downloads][downloads-shield]][releases]
 [![GitHub Release][release-shield]][releases]
 [![GitHub Release Date][release-date-shield]][releases]
@@ -153,6 +154,8 @@ and the contract in [`docs/INTEGRATING.md`](https://github.com/prestomation/ha-h
 Badge reference links.
 -->
 
+[usage-shield]: https://img.shields.io/badge/dynamic/json?color=41BDF5&logo=home-assistant&label=integration%20usage&suffix=%20installs&cacheSeconds=15600&url=https%3A%2F%2Fanalytics.home-assistant.io%2Fcustom_integrations.json&query=%24.home_keeper_battery_notes.total&style=for-the-badge
+[usage]: https://analytics.home-assistant.io/
 [downloads-shield]: https://img.shields.io/github/downloads/prestomation/ha-home-keeper-battery-notes/total.svg?style=for-the-badge
 [releases]: https://github.com/prestomation/ha-home-keeper-battery-notes/releases
 [release-shield]: https://img.shields.io/github/release/prestomation/ha-home-keeper-battery-notes.svg?style=for-the-badge
