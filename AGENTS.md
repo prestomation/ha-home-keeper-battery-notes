@@ -102,6 +102,6 @@ against: the `home-keeper` requirement in `requirements-test.txt` (the fake the
 integration tier uses) and `HK_REF` in `ci/fetch-upstreams.sh` (the real integration
 the docker tier installs). Both should point at a Home Keeper release tag, so a
 release of this glue is tested against a Home Keeper a user can install. Today both
-name the same commit SHA, `039b9f7e02aaa1f1f059ad49efa95e5d3f33ab4e`, because the
+name the same commit SHA, `065ac91de80ad856f999d6cb8a1e89dc8406705c`, because the
 contract has no release yet. Move both to the tag ha-home-keeper#349 ships as, in one PR, once Home
 Keeper publishes it.

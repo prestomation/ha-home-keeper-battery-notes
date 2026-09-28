@@ -596,14 +596,16 @@ class BatteryNotesGlue:
         """Converge the battery appliance and the consumable link on every task.
 
         Runs after the task actions, so a task created in this pass is linked in the
-        same pass. The plan is re-read once after a write to the appliance, because a
-        part gets its id from Home Keeper and a task can only link to a stored part.
+        same pass. The plan is re-read after a write to the appliance, because a part
+        gets its id from Home Keeper and a task can only link to a stored part. It is
+        re-read after a link too, because our chip is cleared only from a task whose
+        link is stored. So a new type takes 3 passes: the part, the link, the chip.
         The caller holds the lock.
         """
         if not self._stock_enabled or not self._hk_ready(HK_SERVICE_LIST_ASSETS):
             return
         try:
-            for _pass in range(2):
+            for _pass in range(3):
                 actions = logic.plan_stock_reconcile(
                     await self._list_assets(),
                     await self._list_tasks(),
@@ -617,7 +619,14 @@ class BatteryNotesGlue:
                     await self._execute(action)
                 _LOGGER.debug("Battery stock applied %d action(s)", len(actions))
                 if not any(
-                    isinstance(action, (logic.EnsureAsset, logic.UpdateManagedAsset))
+                    isinstance(
+                        action,
+                        (
+                            logic.EnsureAsset,
+                            logic.UpdateManagedAsset,
+                            logic.LinkConsumable,
+                        ),
+                    )
                     for action in actions
                 ):
                     return

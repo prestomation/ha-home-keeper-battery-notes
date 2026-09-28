@@ -468,11 +468,14 @@ def plan_reconcile(
         # shows up on the card without requiring the user to trigger a new event. A
         # recreated task is already carrying the chip in its fresh payload, and its
         # old id is about to stop existing, so skip the patch there.
+        # A task linked to a battery part gets its chip from Home Keeper, which also
+        # opens the part, so it carries none of ours (see ``plan_stock_reconcile``).
         existing = task_for_device(tasks, device_id)
         if (
             existing
             and not isinstance(action, RecreateTask)
             and not existing.get("task_chips")
+            and _link_of(existing) is None
         ):
             chip = build_battery_chip(
                 battery_type, battery_quantity, kind=task_kind(existing)
@@ -542,7 +545,9 @@ class UnlinkConsumable:
     task_id: str
 
 
-StockAction = EnsureAsset | UpdateManagedAsset | LinkConsumable | UnlinkConsumable
+StockAction = (
+    EnsureAsset | UpdateManagedAsset | LinkConsumable | UnlinkConsumable | UpdateChips
+)
 
 
 def normalize_battery_type(raw: Any) -> str | None:
@@ -798,6 +803,32 @@ def _link_target(
     return best
 
 
+def _unlinked_chip(
+    task: dict[str, Any],
+    record: dict[str, Any] | None,
+    link: dict[str, Any],
+    parts_by_id: dict[str, dict[str, Any]],
+) -> dict[str, str] | None:
+    """Our chip for a task that is losing its part link, or ``None``.
+
+    The device's own battery comes first. A device we know only from an event is not
+    in the snapshot after a restart, so the link being dropped is the fallback: the
+    part it names is the battery type, and its quantity is the cell count. Without
+    one, the task would lose both chips at once.
+    """
+    kind = task_kind(task)
+    if record is not None:
+        chip = build_battery_chip(
+            record.get("battery_type"), record.get("battery_quantity"), kind=kind
+        )
+        if chip:
+            return chip
+    part = parts_by_id.get(str(link.get("part_id")))
+    if part is None:
+        return None
+    return build_battery_chip(part.get("name"), _quantity(link.get("quantity")), kind=kind)
+
+
 def plan_stock_reconcile(
     assets: list[dict[str, Any]],
     tasks: list[dict[str, Any]],
@@ -821,6 +852,12 @@ def plan_stock_reconcile(
     many cells as the device holds. A charge task is never linked, because a charged
     battery is not a spare taken out of the drawer. A task whose device or battery
     type is gone keeps its count-free state: the link is dropped.
+
+    A linked task shows Home Keeper's part chip ("Takes 2 AAA"), which opens the
+    part, so our own "2× AAA" chip would say the same thing twice. Once the link is
+    stored, our chip is cleared. The chip is cleared on the pass after the link is
+    written, not in the same pass, so a refused link never leaves a task with no chip.
+    A task that loses its link gets our chip back in the same pass as the unlink.
     """
     actions: list[StockAction] = []
     asset = find_our_asset(assets)
@@ -839,12 +876,14 @@ def plan_stock_reconcile(
         actions.append(UpdateManagedAsset(str(asset["id"]), name=rename, parts=repart))
 
     asset_id = str(asset["id"])
+    parts_by_id = {str(part.get("id")): part for part in stored_parts}
     parts_by_key = {
         battery_type_key(str(part.get("name") or "")): part for part in stored_parts
     }
     for task in our_tasks(tasks):
         link = _link_of(task)
-        record = devices.get(task["source"][SOURCE_NS].get("device_id"))
+        device_id = task["source"][SOURCE_NS].get("device_id")
+        record = devices.get(device_id)
         target = (
             _link_target(record, parts_by_key)
             if record is not None and task_kind(task) == KIND_REPLACE
@@ -853,9 +892,14 @@ def plan_stock_reconcile(
         if target is None:
             if link is not None:
                 actions.append(UnlinkConsumable(task["id"]))
+                chip = _unlinked_chip(task, record, link, parts_by_id)
+                if chip and not task.get("task_chips"):
+                    actions.append(UpdateChips(task["id"], device_id, [chip]))
             continue
         part, quantity = target
         part_id = str(part["id"])
         if link is None or not _link_matches(link, asset_id, part_id, quantity):
             actions.append(LinkConsumable(task["id"], asset_id, part_id, quantity))
+        elif task.get("task_chips"):
+            actions.append(UpdateChips(task["id"], device_id, []))
     return actions

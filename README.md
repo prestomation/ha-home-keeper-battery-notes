@@ -143,9 +143,17 @@ spare left the drawer, and a rechargeable is not a type the appliance holds.
 
 ![The Batteries appliance in Home Keeper, with a part for AA and a part for AAA](docs/images/battery-stock-appliance.png)
 
-The task says what it takes and what is left:
+The task says what it takes and what is left. Before you count a type, the chip says
+only what the task takes, such as **Takes 2 AA**. This chip comes from Home Keeper, so
+the task has no second *"2× AA"* chip beside it. A task with no part, such as a
+*"Charge battery"* task, keeps the *"1× Rechargeable"* chip.
 
-![A replacement task with a "Takes 1 AAA · 4 left" chip](docs/images/battery-stock-task-chip.png)
+![Replacement tasks with a "Takes 2 AA" chip and a "Takes 1 AAA · 4 left" chip](docs/images/battery-stock-task-chip.png)
+
+Click the chip to open that battery type on the **Batteries** appliance. The page
+scrolls to the part and marks it, so you can count your spares or set a reorder point.
+
+![The Batteries appliance with the AAA part marked, opened from the chip on a task](docs/images/battery-stock-part-from-chip.png)
 
 ### Options
 

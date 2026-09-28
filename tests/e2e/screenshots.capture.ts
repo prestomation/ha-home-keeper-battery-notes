@@ -178,16 +178,35 @@ test('capture the battery stock', async ({ page, request }) => {
   await page.setViewportSize(DESKTOP);
 
   // The task side of the same count: the Wall clock's replacement task says what it
-  // takes and what is left, because Battery Notes linked it to the AAA part.
-  const chip = panel.locator('ha-assist-chip.hk-counted').first();
+  // takes and what is left, because Battery Notes linked it to the AAA part. That
+  // chip is Home Keeper's, so the task carries no "1× AAA" chip of ours beside it.
+  // The Smoke alarm's AA part has no count yet, so its chip reads "Takes 2 AA".
+  const chip = panel
+    .locator('ha-card.hk-card', { hasText: 'Wall clock' })
+    .locator('ha-assist-chip.hk-part-chip');
   // The link lands after the event that made the task, so wait for it before the
   // panel is loaded: the panel reads the task list once per page load.
   await waitForTaskLink(request, 'shot_wall_clock');
   await openPanel(page);
   await expect(chip).toContainText('Takes 1 AAA', { timeout: 20_000 });
   await expect(chip).toContainText('4 left');
+  await expect(
+    panel.locator('ha-assist-chip', { hasText: '1× AAA' }),
+    'a linked task carries no chip of ours',
+  ).toHaveCount(0);
   await page.waitForTimeout(600);
   await page.screenshot({ path: `${OUT}/battery-stock-task-chip.png`, fullPage: true });
+
+  // A click on that chip opens the AAA part on the Batteries appliance, scrolled to
+  // and marked.
+  await chip.click();
+  await expect(page).toHaveURL(new RegExp(`/appliances/${asset.id}/parts/${aaa.id}$`));
+  await expect(panel.locator(`.hk-part-row[data-part-row="${aaa.id}"]`)).toHaveClass(
+    /hk-part-focus/,
+  );
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(900);
+  await page.screenshot({ path: `${OUT}/battery-stock-part-from-chip.png` });
 
   // On a phone the same chip is shot on the task's own page: in the list it sits
   // behind the fixed bottom tab bar, which a full-page capture draws across the row.

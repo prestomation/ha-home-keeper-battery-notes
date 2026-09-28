@@ -982,7 +982,13 @@ def test_plan_unlinks_a_charge_task_that_carries_a_link():
     charge = _charge_task("d1")
     charge["source"]["part"] = {"asset_id": "asset1", "part_id": "p1", "manual": True}
     actions = _plan([asset], [charge], {"d1": _device("Hallway lock", "AAA", 2)})
-    assert actions == [L.UnlinkConsumable("task_d1")]
+    # The link goes, and the task gets our chip back, with the charging icon.
+    assert actions == [
+        L.UnlinkConsumable("task_d1"),
+        L.UpdateChips(
+            "task_d1", "d1", [{"label": "2× AAA", "icon": "mdi:battery-charging"}]
+        ),
+    ]
 
 
 def test_plan_unlinks_a_task_whose_device_is_gone():
@@ -992,7 +998,11 @@ def test_plan_unlinks_a_task_whose_device_is_gone():
     task = _task("d1")
     task["source"]["part"] = {"asset_id": "asset1", "part_id": "p1", "manual": True}
     actions = _plan([asset], [task], {})
-    assert actions == [L.UnlinkConsumable("task_d1")]
+    # The chip comes back from the part the link named, 1 cell when it said none.
+    assert actions == [
+        L.UnlinkConsumable("task_d1"),
+        L.UpdateChips("task_d1", "d1", [{"label": "1× AAA", "icon": "mdi:battery"}]),
+    ]
 
 
 def test_plan_leaves_an_unlinked_task_with_an_unknown_type_alone():
@@ -1035,3 +1045,116 @@ def test_plan_waits_for_the_part_before_it_links():
     actions = _plan([asset], [task], {"d1": _device("Front door sensor", "AAA", 2)})
     assert len(actions) == 1
     assert isinstance(actions[0], L.UpdateManagedAsset)
+
+
+# ── battery stock: one chip on a linked task ─────────────────────────────────
+_AAA_NOTES = "Used by 1 device · 2 installed — Front door sensor (2)"
+_AAA_CHIP = {"label": "2× AAA", "icon": "mdi:battery"}
+
+
+def _linked_task(device_id, *, chips=None, quantity=2):
+    task = _task(device_id)
+    task["source"]["part"] = {
+        "asset_id": "asset1",
+        "part_id": "p1",
+        "manual": True,
+        "quantity": quantity,
+    }
+    if chips is not None:
+        task["task_chips"] = chips
+    return task
+
+
+def test_plan_clears_our_chip_once_the_link_is_stored():
+    # Home Keeper's part chip says the same thing, and it opens the part.
+    asset = _asset([_stored_part("p1", "AAA", notes=_AAA_NOTES)])
+    task = _linked_task("d1", chips=[_AAA_CHIP])
+    actions = _plan([asset], [task], {"d1": _device("Front door sensor", "AAA", 2)})
+    assert actions == [L.UpdateChips("task_d1", "d1", [])]
+
+
+def test_plan_keeps_our_chip_while_the_link_is_only_being_written():
+    # A refused link must not leave the task with no chip at all, so the chip is
+    # cleared on a later pass, once the link is stored.
+    asset = _asset([_stored_part("p1", "AAA", notes=_AAA_NOTES)])
+    task = {**_task("d1"), "task_chips": [_AAA_CHIP]}
+    actions = _plan([asset], [task], {"d1": _device("Front door sensor", "AAA", 2)})
+    assert actions == [L.LinkConsumable("task_d1", "asset1", "p1", 2)]
+
+
+def test_plan_keeps_our_chip_while_a_changed_link_is_being_written():
+    asset = _asset([_stored_part("p1", "AAA", notes=_AAA_NOTES)])
+    task = _linked_task("d1", chips=[_AAA_CHIP], quantity=1)
+    actions = _plan([asset], [task], {"d1": _device("Front door sensor", "AAA", 2)})
+    assert actions == [L.LinkConsumable("task_d1", "asset1", "p1", 2)]
+
+
+def test_plan_leaves_a_charge_task_its_chip():
+    notes = "Used by 1 device · 2 installed — Hallway lock (2)"
+    asset = _asset([_stored_part("p1", "AAA", notes=notes)])
+    charge = {
+        **_charge_task("d1"),
+        "task_chips": [{"label": "2× AAA", "icon": "mdi:battery-charging"}],
+    }
+    assert _plan([asset], [charge], {"d1": _device("Hallway lock", "AAA", 2)}) == []
+
+
+def test_plan_does_not_restore_a_chip_the_task_still_has():
+    asset = _asset([_stored_part("p1", "AAA", notes="Not used by any device", stock=4)])
+    task = _linked_task("d1", chips=[_AAA_CHIP])
+    actions = _plan([asset], [task], {"d1": _device("Front door sensor", None)})
+    assert actions == [L.UnlinkConsumable("task_d1")]
+
+
+def test_plan_restores_the_chip_from_the_link_when_the_device_is_gone():
+    # A device known only from an event is not in the snapshot after a restart.
+    asset = _asset([_stored_part("p1", "AAA", notes="Not used by any device", stock=4)])
+    task = _linked_task("d1", chips=[])
+    assert _plan([asset], [task], {}) == [
+        L.UnlinkConsumable("task_d1"),
+        L.UpdateChips("task_d1", "d1", [_AAA_CHIP]),
+    ]
+
+
+def test_plan_restores_the_chip_from_the_link_when_the_type_is_unknown():
+    asset = _asset([_stored_part("p1", "AAA", notes="Not used by any device", stock=4)])
+    task = _linked_task("d1", chips=[], quantity=2.0)
+    actions = _plan([asset], [task], {"d1": _device("Old sensor", None)})
+    assert actions == [
+        L.UnlinkConsumable("task_d1"),
+        L.UpdateChips("task_d1", "d1", [_AAA_CHIP]),
+    ]
+
+
+def test_plan_prefers_the_device_battery_over_the_link():
+    # The device now takes a rechargeable, so the task is a charge task and the
+    # restored chip names what the device reports, not the part it used to take.
+    asset = _asset([_stored_part("p1", "AAA", notes="Not used by any device", stock=4)])
+    charge = _charge_task("d1")
+    charge["source"]["part"] = {"asset_id": "asset1", "part_id": "p1", "quantity": 2}
+    actions = _plan([asset], [charge], {"d1": _device("Hallway lock", "Rechargeable", 1)})
+    assert actions == [
+        L.UnlinkConsumable("task_d1"),
+        L.UpdateChips(
+            "task_d1", "d1", [{"label": "1× Rechargeable", "icon": "mdi:battery-charging"}]
+        ),
+    ]
+
+
+def test_plan_restores_no_chip_when_the_linked_part_is_gone_too():
+    asset = _asset([])
+    task = _linked_task("d1", chips=[])
+    assert _plan([asset], [task], {}) == [L.UnlinkConsumable("task_d1")]
+
+
+def test_reconcile_backfills_no_chip_on_a_linked_task():
+    task = _linked_task("d1")
+    task["next_due"] = "2026-06-01T00:00:00-04:00"
+    actions = L.plan_reconcile(
+        [task],
+        {"d1": {"name": "Sensor", "battery_type": "AAA", "battery_quantity": 2}},
+        set(),
+        config_entry_id=CFG,
+        name_template=TMPL,
+    )
+    assert not any(isinstance(a, L.UpdateChips) for a in actions)

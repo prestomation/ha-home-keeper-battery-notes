@@ -86,7 +86,14 @@ def test_rechargeable_low_creates_a_charge_task(glue):
     other = glue.poll_glue_task(DISPOSABLE, _armed, "became armed")
     assert other["name"] == "Replace battery: E2E remote"
     assert other["source"]["home_keeper_battery_notes"]["kind"] == "replace"
-    assert other["task_chips"] == [{"label": "1× AAA", "icon": "mdi:battery"}]
+    # A replacement task is linked to its battery part, and Home Keeper's part chip
+    # names the type, so the glue clears its own chip once the link is stored.
+    other = glue.poll_glue_task(
+        DISPOSABLE,
+        lambda t: bool(t and (t.get("source") or {}).get("part")) and not t.get("task_chips"),
+        "was linked to its part and lost the glue chip",
+    )
+    assert other["source"]["part"]["quantity"] == 1
 
 
 def test_charge_task_logs_every_charge_on_one_task(glue):

@@ -103,8 +103,12 @@ async def test_low_creates_armed_task(hass: HomeAssistant) -> None:
 
 
 async def test_low_with_battery_type_sets_task_chip(hass: HomeAssistant) -> None:
+    # With stock off the task has no part link, so it carries our own chip.
     hk = await async_setup_fake_home_keeper(hass)
-    await _setup_glue(hass)
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={OPT_STOCK_ENABLED: False})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
 
     hass.bus.async_fire(
         BN_EVENT_THRESHOLD,
@@ -317,7 +321,10 @@ async def test_reconcile_reads_battery_attributes_into_notes(hass: HomeAssistant
     task = hk.get_task_by_source(DOMAIN, device_id=device.id)
     assert task is not None and task["next_due"]  # created + armed
     assert "CR2032" in task["notes"]
-    assert task.get("task_chips") == [{"label": "1× CR2032", "icon": "mdi:battery"}]
+    # The task is linked to the CR2032 part, so Home Keeper's part chip shows the
+    # type and ours is cleared.
+    assert task["source"]["part"]["quantity"] == 1
+    assert task.get("task_chips") == []
 
 
 async def test_rechargeable_low_creates_no_task(hass: HomeAssistant) -> None:
@@ -1024,6 +1031,58 @@ async def test_the_replace_task_is_linked_to_the_battery_type(
     assert link["asset_id"] == asset["id"]
     assert link["part_id"] == part["id"]
     assert link["quantity"] == 2
+
+
+async def test_a_linked_task_carries_no_chip_of_ours(hass: HomeAssistant) -> None:
+    # Home Keeper's part chip names the type and opens the part, so a second chip
+    # from us would say the same thing twice.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    await _fire_typed_low(hass)
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert "part" in task["source"]
+    assert task.get("task_chips") == []
+
+
+async def test_a_task_that_loses_its_link_gets_our_chip_back(
+    hass: HomeAssistant,
+) -> None:
+    # The device is known only from its event, so a reload forgets it and the stock
+    # pass drops the link. The task must not end with no chip at all.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+    await _fire_typed_low(hass)
+    assert hk.get_task_by_source(DOMAIN, device_id=DEVICE).get("task_chips") == []
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert "part" not in task["source"]
+    assert task.get("task_chips") == [{"label": "2× AAA", "icon": "mdi:battery"}]
+
+
+async def test_turning_stock_off_leaves_the_link_and_no_second_chip(
+    hass: HomeAssistant,
+) -> None:
+    # The stock pass stops, so nothing unlinks the task, and Home Keeper's part
+    # chip stays the only chip. The reconcile must not add ours beside it.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+    await _fire_typed_low(hass)
+
+    hass.config_entries.async_update_entry(entry, options={OPT_STOCK_ENABLED: False})
+    await hass.async_block_till_done()
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert "part" in task["source"]
+    assert task.get("task_chips") == []
 
 
 async def test_completing_the_task_takes_the_batteries_off_the_count(

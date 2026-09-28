@@ -10,7 +10,7 @@ HK_REPO="${HK_REPO:-https://github.com/prestomation/ha-home-keeper}"
 # Pinned to the commit of ha-home-keeper#349 (managed appliances), the same ref
 # requirements-test.txt names. Move both to the tag ha-home-keeper#349 ships as once Home Keeper
 # releases it.
-HK_REF="${HK_REF:-039b9f7e02aaa1f1f059ad49efa95e5d3f33ab4e}"
+HK_REF="${HK_REF:-065ac91de80ad856f999d6cb8a1e89dc8406705c}"
 # Battery Notes — the integration this glue bridges to.
 BN_REPO="${BN_REPO:-https://github.com/andrew-codechimp/HA-Battery-Notes}"
 BN_REF="${BN_REF:-main}"

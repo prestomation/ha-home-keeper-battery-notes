@@ -196,7 +196,11 @@ export async function setPartStock(
   expect(r.ok(), `counting the spares failed: ${r.status()}`).toBeTruthy();
 }
 
-/** Wait until the glue has linked *deviceId*'s task to a battery part. */
+/**
+ * Wait until the glue has linked *deviceId*'s task to a battery part, and has
+ * cleared its own chip from it. The chip goes on the pass after the link, so a
+ * read between the two would still show both chips.
+ */
 export async function waitForTaskLink(
   request: APIRequestContext,
   deviceId: string,
@@ -210,7 +214,10 @@ export async function waitForTaskLink(
     if (r.ok()) {
       const body = (await r.json()) as { service_response: { tasks: Record<string, any>[] } };
       const match = body.service_response.tasks.find(
-        (t) => t?.source?.home_keeper_battery_notes?.device_id === deviceId && t?.source?.part,
+        (t) =>
+          t?.source?.home_keeper_battery_notes?.device_id === deviceId &&
+          t?.source?.part &&
+          !(t?.task_chips ?? []).length,
       );
       if (match) return match;
     }
