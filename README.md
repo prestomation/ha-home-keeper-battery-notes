@@ -124,6 +124,9 @@ why nothing is pushed back to Battery Notes:
 
 ## Battery stock
 
+Battery stock needs Home Keeper 0.27.0b5 or later. With an older Home Keeper, the
+glue keeps its battery tasks as before and makes no appliance.
+
 Home Keeper gets an appliance called **Batteries** with one part for each battery type
 Battery Notes reports. A part carries the count of spares you hold, and the *"Used by"*
 line on it names the devices that take that type.

@@ -6,4 +6,4 @@ pytest-homeassistant-custom-component
 # tests run against, and the real integration the docker tier installs.
 # Pinned to the commit of ha-home-keeper#349 (managed appliances). Move this and
 # HK_REF in ci/fetch-upstreams.sh to the tag ha-home-keeper#349 ships as once Home Keeper releases it.
-home-keeper @ git+https://github.com/prestomation/ha-home-keeper@065ac91de80ad856f999d6cb8a1e89dc8406705c
+home-keeper @ git+https://github.com/prestomation/ha-home-keeper@v0.27.0b5
