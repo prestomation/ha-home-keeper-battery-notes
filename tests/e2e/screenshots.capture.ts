@@ -206,7 +206,7 @@ test('capture the battery stock', async ({ page, request }) => {
   );
   await page.mouse.move(0, 0);
   await page.waitForTimeout(900);
-  await page.screenshot({ path: `${OUT}/battery-stock-part-from-chip.png` });
+  await page.screenshot({ path: `${OUT}/battery-stock-marked-part.png` });
 
   // On a phone the same chip is shot on the task's own page: in the list it sits
   // behind the fixed bottom tab bar, which a full-page capture draws across the row.

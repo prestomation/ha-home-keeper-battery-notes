@@ -153,7 +153,7 @@ the task has no second *"2× AA"* chip beside it. A task with no part, such as a
 Click the chip to open that battery type on the **Batteries** appliance. The page
 scrolls to the part and marks it, so you can count your spares or set a reorder point.
 
-![The Batteries appliance with the AAA part marked, opened from the chip on a task](docs/images/battery-stock-part-from-chip.png)
+![The Batteries appliance with the AAA part marked, opened from the chip on a task](docs/images/battery-stock-marked-part.png)
 
 ### Options
 
