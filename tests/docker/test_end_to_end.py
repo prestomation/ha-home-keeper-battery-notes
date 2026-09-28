@@ -116,3 +116,49 @@ def test_low_again_rearms_without_duplicating(api):
     # Clean up so re-runs start from the same baseline.
     api.fire("battery_notes_battery_replaced", {"device_id": DEVICE})
     api.poll_state(TODO, str(base))
+
+
+def test_the_real_home_keeper_shows_our_managed_appliance(api):
+    """The battery appliance exists in the real Home Keeper, and we own it.
+
+    The glue creates it over ``home_keeper.add_asset`` with a ``managed_by`` block,
+    so this is the contract test for the appliance half of INTEGRATING.md §8: the
+    service takes the block, Home Keeper stores it, and ``list_assets`` gives it back.
+    """
+    # A battery type of this test's own, so the assertion that a new part starts
+    # uncounted survives a container whose storage another run already counted.
+    api.fire(
+        "battery_notes_battery_threshold",
+        {
+            "device_id": "e2e_stock_device",
+            "device_name": "Stock sensor",
+            "battery_low": True,
+            "battery_type": "CR2032",
+            "battery_quantity": 2,
+        },
+    )
+    asset = api.poll_asset("battery_stock", "the battery appliance never appeared")
+
+    assert asset["managed_by"]["integration"] == "home_keeper_battery_notes"
+    assert asset["managed_by"]["locked_fields"] == ["name", "parts"]
+    assert asset["name"] == "Batteries"
+    part = next(p for p in asset["parts"] if p["name"] == "CR2032")
+    assert part["type"] == "consumable"
+    # A part nobody has counted tracks no stock, so no buy task follows.
+    assert part["stock"] is None
+    assert part["notes"].startswith("Used by 1 device")
+
+    # The replacement task draws the 2 cells the device holds off that part.
+    task = api.poll_glue_task(
+        "e2e_stock_device",
+        lambda t: bool(t and (t.get("source") or {}).get("part")),
+        "linked to the battery part",
+    )
+    link = task["source"]["part"]
+    assert link["asset_id"] == asset["id"]
+    assert link["part_id"] == part["id"]
+    assert link["quantity"] == 2
+
+    # Clean up so a re-run starts from the same baseline.
+    api.fire("battery_notes_battery_replaced", {"device_id": "e2e_stock_device"})
+    api.delete_glue_task("e2e_stock_device")

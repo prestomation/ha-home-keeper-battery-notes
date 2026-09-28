@@ -47,7 +47,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # Home Keeper's test fake imports Home Assistant. On 3.12 pip resolves a
+          # Home Assistant too old to import it, and the lane ran nothing.
+          python-version: "3.13"
       - run: bash ci/test-integration.sh
 
   e2e-docker:
