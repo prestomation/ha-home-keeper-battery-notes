@@ -64,7 +64,7 @@ this bridge to anyone who has Battery Notes installed but hasn't added it yet.
 ## Install
 
 1. Install **Home Keeper** and **Battery Notes**.
-2. Add this repo to HACS as a custom repository (category: Integration), install, restart.
+2. This integration is in the default HACS store. In HACS, search for **Home Keeper — Battery Notes**, install it, and restart.
 3. Settings → Devices & Services → **Add Integration** → *Home Keeper — Battery Notes*.
 
 ### Options
@@ -221,7 +221,7 @@ Badge reference links.
 [commits-shield]: https://img.shields.io/github/last-commit/prestomation/ha-home-keeper-battery-notes?style=for-the-badge
 [commits]: https://github.com/prestomation/ha-home-keeper-battery-notes/commits/main
 [license-shield]: https://img.shields.io/github/license/prestomation/ha-home-keeper-battery-notes.svg?style=for-the-badge
-[hacs-shield]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge
+[hacs-shield]: https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge
 [hacs]: https://github.com/hacs/integration
 [maintenance-shield]: https://img.shields.io/badge/maintainer-%40prestomation-blue.svg?style=for-the-badge
 [hacs-validation-shield]: https://github.com/prestomation/ha-home-keeper-battery-notes/actions/workflows/hacs.yml/badge.svg
