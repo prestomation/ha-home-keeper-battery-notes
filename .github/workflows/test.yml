@@ -14,7 +14,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ruff
-      - run: ruff check custom_components tests ci
+      # ASYNC rules find blocking calls (open, time.sleep, Path methods) in async def.
+      - run: ruff check custom_components tests ci scripts
 
   changelog-release-gap:
     runs-on: ubuntu-latest
@@ -60,6 +61,20 @@ jobs:
         with:
           python-version: "3.12"
       - run: bash ci/test-docker.sh
+      - name: Upload Home Assistant log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ha-log-docker
+          path: ha-docker.log
+          if-no-files-found: warn
+
+      # Last step. The log must have no warnings or errors from our code, no
+      # "Detected blocking call" for our domain, and no known bad patterns.
+      # Add exceptions to scripts/ha_log_allowlist.txt (with a reason).
+      - name: Check Home Assistant log
+        if: always()
+        run: python3 scripts/check_ha_log.py --domain home_keeper_battery_notes ha-docker.log
 
   e2e-browser:
     runs-on: ubuntu-latest
@@ -75,3 +90,18 @@ jobs:
           name: playwright-report
           path: tests/e2e/playwright-report/
           retention-days: 7
+
+      - name: Upload Home Assistant log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ha-log-browser
+          path: ha-browser.log
+          if-no-files-found: warn
+
+      # Last step. The log must have no warnings or errors from our code, no
+      # "Detected blocking call" for our domain, and no known bad patterns.
+      # Add exceptions to scripts/ha_log_allowlist.txt (with a reason).
+      - name: Check Home Assistant log
+        if: always()
+        run: python3 scripts/check_ha_log.py --domain home_keeper_battery_notes ha-browser.log

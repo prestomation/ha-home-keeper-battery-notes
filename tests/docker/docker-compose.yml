@@ -11,5 +11,9 @@ services:
       - ./custom_components:/config/custom_components:ro
     environment:
       - TZ=America/New_York
+      # Dev mode and asyncio debug make Python log never-awaited coroutines,
+      # slow callbacks and unclosed resources. scripts/check_ha_log.py reads them.
+      - PYTHONDEVMODE=1
+      - PYTHONASYNCIODEBUG=1
     tmpfs:
       - /tmp

@@ -9,8 +9,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 cleanup() {
+  # Use absolute paths: e2e-up.sh changes into tests/e2e before this trap runs.
+  # Save the Home Assistant log first: `down` removes the container and its log.
+  # scripts/check_ha_log.py reads this file in CI.
+  (cd "$ROOT/tests/docker" && docker compose logs --no-color homeassistant > "$ROOT/ha-browser.log") || true
   if [ "${KEEP_UP:-0}" != "1" ]; then
-    (cd tests/docker && docker compose down -v) || true
+    (cd "$ROOT/tests/docker" && docker compose down -v) || true
   fi
 }
 trap cleanup EXIT
