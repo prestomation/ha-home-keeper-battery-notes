@@ -1,0 +1,6 @@
+[tool.ruff.lint]
+# Keep ruff's default rules and add the async rules. ASYNC finds blocking
+# calls (open, time.sleep, requests, Path methods) inside "async def".
+# It cannot see a blocking call that happens deeper in a library, so it is
+# a weak guard. The blockbuster fixture and the log gate cover the rest.
+extend-select = ["ASYNC"]

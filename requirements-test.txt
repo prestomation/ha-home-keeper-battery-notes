@@ -1,6 +1,8 @@
 pytest
 pytest-asyncio
 pytest-homeassistant-custom-component
+# Fails a test when code blocks the event loop (see tests/integration/conftest.py).
+blockbuster>=1.5
 
 # Home Keeper provides the test fake (home_keeper.testing) the integration-fake
 # tests run against, and the real integration the docker tier installs.

@@ -15,3 +15,6 @@ tests/docker/ha_config/.storage/*
 
 # Release build artifact (built by ci/build-zip.sh)
 home_keeper_battery_notes.zip
+
+# HA container logs saved by ci/test-docker.sh and ci/e2e-up.sh
+ha-*.log
