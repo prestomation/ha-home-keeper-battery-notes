@@ -206,6 +206,14 @@ def test_cli_exit_codes(tmp_path):
     assert _cli(tmp_path, "no ha records here\n").returncode == 2
 
 
+def test_cli_unreadable_allowlist_exits_2(tmp_path):
+    # A directory cannot be read as a file, on any user (also as root in CI).
+    result = _cli(tmp_path, CLEAN_LOG, "--allowlist", str(tmp_path))
+    assert result.returncode == 2
+    assert "error:" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_cli_reads_stdin():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--domain", "home_keeper_battery_notes"],

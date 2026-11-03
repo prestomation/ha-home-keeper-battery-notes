@@ -291,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
         allowlist = (
             load_allowlist(args.allowlist) if args.allowlist.exists() else []
         )
-    except ValueError as err:
+    except (ValueError, OSError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 2
 
