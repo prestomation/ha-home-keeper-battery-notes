@@ -7,10 +7,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)"
 STAGE="$ROOT/tests/docker/custom_components"
 HK_REPO="${HK_REPO:-https://github.com/prestomation/ha-home-keeper}"
-# Pinned to the commit of ha-home-keeper#349 (managed appliances), the same ref
-# requirements-test.txt names. Move both to the tag ha-home-keeper#349 ships as once Home Keeper
-# releases it.
-HK_REF="${HK_REF:-v0.27.0b5}"
+# Pinned to a Home Keeper release tag, the same ref requirements-test.txt names.
+# Move both together.
+HK_REF="${HK_REF:-v0.27.0}"
 # Battery Notes — the integration this glue bridges to.
 BN_REPO="${BN_REPO:-https://github.com/andrew-codechimp/HA-Battery-Notes}"
 BN_REF="${BN_REF:-main}"

@@ -125,6 +125,6 @@ which first shipped in Home Keeper 0.27.0b5 (ha-home-keeper#349). Two places sel
 the Home Keeper the tests run against: the `home-keeper` requirement in
 `requirements-test.txt` (the fake the integration tier uses) and `HK_REF` in
 `ci/fetch-upstreams.sh` (the real integration the docker tier installs). Both point at
-the same Home Keeper release tag, today `v0.27.0b5`, so a release of this glue is
+the same Home Keeper release tag, today `v0.27.0`, so a release of this glue is
 tested against a Home Keeper a user can install. Move them together, in one PR, and
 never to a branch or an unreleased commit.
