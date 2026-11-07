@@ -125,7 +125,7 @@ why nothing is pushed back to Battery Notes:
 
 ## Battery stock
 
-Battery stock needs Home Keeper 0.27.0b5 or later. With an older Home Keeper, the
+Battery stock needs Home Keeper 0.27.0 or later. With an older Home Keeper, the
 glue keeps its battery tasks as before and makes no appliance.
 
 Home Keeper gets an appliance called **Batteries** with one part for each battery type
