@@ -70,6 +70,12 @@ class BatteryNotesGlueConfigFlow(ConfigFlow, domain=DOMAIN):
         return BatteryNotesGlueOptionsFlow()
 
 
+def _typed_stock_name(opts: Any) -> str:
+    """The appliance name the user typed, or an empty string for the translated one."""
+    name = str(opts.get(OPT_STOCK_APPLIANCE_NAME) or "").strip()
+    return "" if name == DEFAULT_STOCK_APPLIANCE_NAME else name
+
+
 class BatteryNotesGlueOptionsFlow(OptionsFlow):
     """Options: name templates, sync, rechargeable mode, and the battery stock."""
 
@@ -131,9 +137,7 @@ class BatteryNotesGlueOptionsFlow(OptionsFlow):
                 ): bool,
                 vol.Optional(
                     OPT_STOCK_APPLIANCE_NAME,
-                    default=opts.get(
-                        OPT_STOCK_APPLIANCE_NAME, DEFAULT_STOCK_APPLIANCE_NAME
-                    ),
+                    default=_typed_stock_name(opts),
                 ): str,
             }
         )

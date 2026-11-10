@@ -4,6 +4,12 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
+## [0.5.0b1] - 2026-11-10
+
+### Fixed
+
+- **Translated appliance name.** The Batteries appliance now takes its name from your Home Assistant language, in 16 languages. An appliance named before this release gets the new name on the next restart, unless you typed your own name in the options. (Fixes prestomation/ha-home-keeper#552)
+
 ## [0.4.0] - 2026-11-07
 
 ### Added

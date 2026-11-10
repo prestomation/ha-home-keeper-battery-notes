@@ -33,7 +33,7 @@
           "treat_not_reported": "A dead battery usually stops reporting instead of going low. When on, a battery that hasn't reported for the number of days below gets a task. The day threshold also filters brief dropouts (restarts, network blips).",
           "not_reported_days": "Only applies when the option above is on.",
           "stock_enabled": "Home Keeper gets an appliance with one part for each battery type Battery Notes reports. Enter a count on a part and Home Keeper takes the batteries a device holds off that count when you complete its replacement task. Turn the option off and the appliance stays as it is.",
-          "stock_appliance_name": "The appliance name in Home Keeper. Default: \"Batteries\"."
+          "stock_appliance_name": "The appliance name in Home Keeper. Leave it empty to use \"Batteries\" in the Home Assistant language."
         }
       }
     }
@@ -45,6 +45,11 @@
         "skip": "Ignore them (raise no task)",
         "replace": "Replace it (raise a \"replace battery\" task)"
       }
+    }
+  },
+  "device": {
+    "battery_stock": {
+      "name": "Batteries"
     }
   }
 }
