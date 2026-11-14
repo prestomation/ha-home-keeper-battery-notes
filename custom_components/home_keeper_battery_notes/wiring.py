@@ -21,6 +21,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.translation import async_get_translations
 
 from . import logic
 from .const import (
@@ -69,6 +70,7 @@ from .const import (
     OPT_TWO_WAY,
     ORIGIN,
     SOURCE_NS,
+    STOCK_DEVICE_KEY,
 )
 
 # How often the glue asks Battery Notes to re-check which batteries have stopped
@@ -155,12 +157,23 @@ class BatteryNotesGlue:
     def _stock_enabled(self) -> bool:
         return self.entry.options.get(OPT_STOCK_ENABLED, DEFAULT_STOCK_ENABLED)
 
-    @property
-    def _stock_appliance_name(self) -> str:
-        name = self.entry.options.get(
-            OPT_STOCK_APPLIANCE_NAME, DEFAULT_STOCK_APPLIANCE_NAME
+    async def _stock_appliance_name(self) -> str:
+        """The appliance name: the option when the user typed one, else a translation.
+
+        Home Keeper stores the name as plain text, so the glue picks the language.
+        An empty option, or the English default that the options form used to save,
+        means no name was typed.
+        """
+        name = str(self.entry.options.get(OPT_STOCK_APPLIANCE_NAME) or "").strip()
+        if name and name != DEFAULT_STOCK_APPLIANCE_NAME:
+            return name
+        translations = await async_get_translations(
+            self.hass, self.hass.config.language, "device", [DOMAIN]
         )
-        return str(name).strip() or DEFAULT_STOCK_APPLIANCE_NAME
+        return (
+            translations.get(f"component.{DOMAIN}.device.{STOCK_DEVICE_KEY}.name")
+            or DEFAULT_STOCK_APPLIANCE_NAME
+        )
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     async def async_setup(self) -> None:
@@ -611,7 +624,7 @@ class BatteryNotesGlue:
                     await self._list_tasks(),
                     devices,
                     config_entry_id=self.entry.entry_id,
-                    appliance_name=self._stock_appliance_name,
+                    appliance_name=await self._stock_appliance_name(),
                 )
                 if not actions:
                     return

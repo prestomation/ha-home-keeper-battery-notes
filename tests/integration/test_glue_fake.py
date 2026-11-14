@@ -1229,6 +1229,65 @@ async def test_the_appliance_name_follows_the_option(hass: HomeAssistant) -> Non
     assert _stock_asset(hk)["name"] == "Battery drawer"
 
 
+async def test_the_default_appliance_name_follows_the_language(
+    hass: HomeAssistant,
+) -> None:
+    hass.config.language = "de"
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    await _fire_typed_low(hass)
+
+    assert _stock_asset(hk)["name"] == "Batterien"
+
+
+async def test_a_language_without_a_translation_keeps_the_english_name(
+    hass: HomeAssistant,
+) -> None:
+    hass.config.language = "xx"
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+
+    await _fire_typed_low(hass)
+
+    assert _stock_asset(hk)["name"] == "Batteries"
+
+
+async def test_a_name_typed_in_the_options_beats_the_language(
+    hass: HomeAssistant,
+) -> None:
+    hass.config.language = "de"
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_STOCK_APPLIANCE_NAME: "Battery drawer"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    await _fire_typed_low(hass)
+
+    assert _stock_asset(hk)["name"] == "Battery drawer"
+
+
+async def test_the_english_name_saved_by_the_form_counts_as_no_name(
+    hass: HomeAssistant,
+) -> None:
+    # The options form used to pre-fill "Batteries", so saving it stored the default.
+    hass.config.language = "de"
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_STOCK_APPLIANCE_NAME: "Batteries"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    await _fire_typed_low(hass)
+
+    assert _stock_asset(hk)["name"] == "Batterien"
+
+
 async def test_a_second_pass_writes_nothing(hass: HomeAssistant) -> None:
     hk = await async_setup_fake_home_keeper(hass)
     entry = await _setup_glue(hass)

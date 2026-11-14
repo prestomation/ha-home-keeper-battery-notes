@@ -99,6 +99,10 @@ DEFAULT_TREAT_NOT_REPORTED = False
 DEFAULT_NOT_REPORTED_DAYS = 3
 DEFAULT_STOCK_ENABLED = True
 DEFAULT_STOCK_APPLIANCE_NAME = "Batteries"
+# The translation key of the default appliance name, under ``device`` in
+# ``translations/<lang>.json``. Home Keeper keeps the name as plain text, so the glue
+# looks it up in the Home Assistant language and writes the result.
+STOCK_DEVICE_KEY = "battery_stock"
 
 # ── What to do about a rechargeable battery ──────────────────────────────────
 # A rechargeable going low means "charge it", not "replace the battery", so the
