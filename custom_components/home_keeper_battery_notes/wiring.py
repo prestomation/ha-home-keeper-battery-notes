@@ -284,6 +284,7 @@ class BatteryNotesGlue:
         """A Battery Notes low sensor flipped with no threshold event: reconcile."""
         if not self.hass.is_running:
             return  # the start-up reconcile covers it
+        _LOGGER.debug("Battery Notes low sensor changed: reconcile")
         await self._reconcile()
 
     async def _on_register_request(self, _event: Event) -> None:

@@ -1346,7 +1346,9 @@ async def test_low_sensor_turning_on_opens_a_task_without_an_event(
     low_id = next(
         e.entity_id
         for e in er.async_get(hass).entities.values()
-        if e.platform == BN_DOMAIN and e.domain == "binary_sensor"
+        if e.platform == BN_DOMAIN
+        and e.domain == "binary_sensor"
+        and e.device_id == device_id
     )
     assert hk.get_task_by_source(DOMAIN, device_id=device_id) is None
 
@@ -1372,7 +1374,9 @@ async def test_low_sensor_turning_off_clears_the_task_without_an_event(
     low_id = next(
         e.entity_id
         for e in er.async_get(hass).entities.values()
-        if e.platform == BN_DOMAIN and e.domain == "binary_sensor"
+        if e.platform == BN_DOMAIN
+        and e.domain == "binary_sensor"
+        and e.device_id == device_id
     )
     hass.states.async_set(low_id, "off")  # off -> ... first make the task exist
     hass.states.async_set(low_id, "on")
@@ -1395,8 +1399,69 @@ async def test_low_sensor_going_unavailable_changes_nothing(
     low_id = next(
         e.entity_id
         for e in er.async_get(hass).entities.values()
-        if e.platform == BN_DOMAIN and e.domain == "binary_sensor"
+        if e.platform == BN_DOMAIN
+        and e.domain == "binary_sensor"
+        and e.device_id == device_id
     )
     hass.states.async_set(low_id, "unavailable")
     await hass.async_block_till_done()
     assert hk.get_task_by_source(DOMAIN, device_id=device_id) is None
+
+
+def _low_sensor_id(hass: HomeAssistant, device_id: str) -> str:
+    return next(
+        e.entity_id
+        for e in er.async_get(hass).entities.values()
+        if e.platform == BN_DOMAIN
+        and e.domain == "binary_sensor"
+        and e.device_id == device_id
+    )
+
+
+async def test_low_sensor_turning_on_rearms_a_dormant_task(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    hass.set_state(CoreState.running)
+    device_id = _make_bn_battery_device(hass, unique="thresh4", low="off")
+    low_id = _low_sensor_id(hass, device_id)
+    hass.states.async_set(low_id, "on")
+    await hass.async_block_till_done()
+    first = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert first["next_due"]
+    hass.states.async_set(low_id, "off")  # the task goes dormant
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"] is None
+
+    hass.states.async_set(low_id, "on")
+    await hass.async_block_till_done()
+
+    ours = [t for t in hk.tasks.values() if (t.get("source") or {}).get(DOMAIN)]
+    assert len(ours) == 1  # no second task
+    again = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert again["id"] == first["id"]  # the same task, armed again
+    assert again["next_due"]
+
+
+async def test_low_sensor_turning_off_keeps_the_task_when_recovery_is_off(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_CLEAR_ON_RECOVERY: False}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.set_state(CoreState.running)
+    device_id = _make_bn_battery_device(hass, unique="thresh5", low="off")
+    low_id = _low_sensor_id(hass, device_id)
+    hass.states.async_set(low_id, "on")
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]
+
+    hass.states.async_set(low_id, "off")
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]  # still armed
