@@ -4,6 +4,12 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
+## [0.5.0b2] - 2026-11-17
+
+### Fixed
+
+- **Battery tasks follow the low sensor.** A task now opens or clears when a Battery Notes low sensor changes, for example after you change a device's threshold. Before, it waited for the next restart. (Fixes prestomation/ha-home-keeper#570)
+
 ## [0.5.0b1] - 2026-11-10
 
 ### Fixed
