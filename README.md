@@ -17,6 +17,22 @@ signals into [Home Keeper](https://github.com/prestomation/ha-home-keeper) tasks
 *"replace this battery"* shows up in your to-do list, on the device page, and in the
 mobile app, and is recorded when you do it.
 
+## Requirements
+
+This integration is only glue. It has no screens and no sidebar entry of its own. You need
+**all 3** of these installed and set up in Home Assistant:
+
+1. **[Home Keeper](https://github.com/prestomation/ha-home-keeper)**, version 0.3.0 or
+   later (0.27.0 or later for [Battery stock](#battery-stock)). It is a separate
+   integration. It adds the **Home Keeper** entry in the sidebar, and the tasks that this
+   glue creates show there. Only an admin user sees that entry.
+2. **[Battery Notes](https://github.com/andrew-codechimp/HA-Battery-Notes)**. It is another
+   separate integration. It knows which battery each device uses, and it reports when a
+   battery is low.
+3. **Home Keeper — Battery Notes** (this integration). It connects the first two.
+
+If one of them is missing, nothing shows up. Install the first two before you add this one.
+
 ## What it does
 
 - **Battery goes low** → a Home Keeper **"Replace battery: …"** task becomes **due now**
@@ -35,7 +51,7 @@ mobile app, and is recorded when you do it.
 
 It uses Home Keeper's **`triggered`** (condition-driven) task type and is fully decoupled:
 it talks to both integrations only over the event bus and services (with `has_service`
-guards), so nothing breaks if one is missing.
+guards), so a missing one causes no error, and no tasks.
 
 ![A low battery becomes a due task in Home Keeper](docs/images/flow-1-battery-low.png)
 ![The replaced battery's task goes dormant in the Monitored section](docs/images/flow-2-monitored.png)
@@ -63,7 +79,10 @@ this bridge to anyone who has Battery Notes installed but hasn't added it yet.
 
 ## Install
 
-1. Install **Home Keeper** and **Battery Notes**.
+1. Install and set up **[Home Keeper](https://github.com/prestomation/ha-home-keeper)** and
+   **[Battery Notes](https://github.com/andrew-codechimp/HA-Battery-Notes)**. Both are
+   required. Each has its own entry under Settings → Devices & Services. You should see the
+   **Home Keeper** entry in the sidebar before you go on.
 2. This integration is in the default HACS store. In HACS, search for **Home Keeper — Battery Notes**, install it, and restart.
 3. Settings → Devices & Services → **Add Integration** → *Home Keeper — Battery Notes*.
 
