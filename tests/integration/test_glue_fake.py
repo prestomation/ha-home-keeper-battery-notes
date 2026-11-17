@@ -1324,3 +1324,79 @@ async def test_removal_hands_a_counted_appliance_back(hass: HomeAssistant) -> No
     kept = hk.assets[asset["id"]]
     assert kept["managed_by"] is None
     assert hk.part_named(asset["id"], "AAA")["stock"] == 4
+
+
+# ── a threshold change moves the sensor without a Battery Notes event ──────────
+# Battery Notes fires its threshold event only when a new battery reading crosses the
+# threshold. A user who raises the threshold above the current level reloads the
+# entry: the low sensor turns on, but no event follows. The glue must watch the
+# sensor itself, or no task opens until the next restart.
+
+
+async def test_low_sensor_turning_on_opens_a_task_without_an_event(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    hass.set_state(CoreState.running)
+    device_id = _make_bn_battery_device(
+        hass, unique="thresh", low="off",
+        attributes={"battery_type": "AA", "battery_quantity": 2}, level="60",
+    )
+    low_id = next(
+        e.entity_id
+        for e in er.async_get(hass).entities.values()
+        if e.platform == BN_DOMAIN and e.domain == "binary_sensor"
+    )
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id) is None
+
+    # The user raises the threshold: the sensor goes off -> on. No event is fired.
+    hass.states.async_set(
+        low_id, "on", {"battery_type": "AA", "battery_quantity": 2}
+    )
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert task is not None
+    assert task["next_due"]  # born armed
+    assert task["notes"] == "2× AA · was at 60%"
+
+
+async def test_low_sensor_turning_off_clears_the_task_without_an_event(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    hass.set_state(CoreState.running)
+    device_id = _make_bn_battery_device(hass, unique="thresh2", low="on")
+    low_id = next(
+        e.entity_id
+        for e in er.async_get(hass).entities.values()
+        if e.platform == BN_DOMAIN and e.domain == "binary_sensor"
+    )
+    hass.states.async_set(low_id, "off")  # off -> ... first make the task exist
+    hass.states.async_set(low_id, "on")
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]
+
+    hass.states.async_set(low_id, "off")
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"] is None
+
+
+async def test_low_sensor_going_unavailable_changes_nothing(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    hass.set_state(CoreState.running)
+    device_id = _make_bn_battery_device(hass, unique="thresh3", low="off")
+    low_id = next(
+        e.entity_id
+        for e in er.async_get(hass).entities.values()
+        if e.platform == BN_DOMAIN and e.domain == "binary_sensor"
+    )
+    hass.states.async_set(low_id, "unavailable")
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id) is None

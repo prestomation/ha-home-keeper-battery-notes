@@ -15,7 +15,7 @@ from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_STATE_CHANGED
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
@@ -198,6 +198,16 @@ class BatteryNotesGlue:
         self.entry.async_on_unload(
             bus.async_listen(HK_EVENT_REGISTER_COMPANIONS, self._on_register_request)
         )
+        # Battery Notes fires its threshold event only when a new battery reading
+        # crosses the threshold. A changed threshold reloads its entry and turns the
+        # low sensor on or off with no event, so the sensor itself is watched too.
+        self.entry.async_on_unload(
+            bus.async_listen(
+                EVENT_STATE_CHANGED,
+                self._on_low_sensor_changed,
+                event_filter=self._is_low_sensor_flip,
+            )
+        )
         await self._register_companion()
 
         # Poll Battery Notes for batteries that have stopped reporting (opt-in). The
@@ -242,6 +252,39 @@ class BatteryNotesGlue:
         self._cancel_started = None  # fired, so Home Assistant has already removed it
         await self._reconcile()
         await self._check_not_reported()
+
+    @callback
+    def _is_low_sensor_flip(self, event_data: Any) -> bool:
+        """True when a Battery Notes low sensor now reads "on" or "off" and changed.
+
+        Runs for every state change in Home Assistant, so the cheap checks come first
+        and the registry is read last. A move *to* ``unavailable``/``unknown`` is
+        not a flip: that is a silent battery, and the not-reported path owns it. A
+        move *from* one is a flip, because a reload goes unavailable -> on.
+        """
+        entity_id = event_data.get("entity_id", "")
+        if not entity_id.startswith("binary_sensor."):
+            return False
+        new = event_data.get("new_state")
+        old = event_data.get("old_state")
+        if new is None or old is None:
+            return False
+        if new.state not in ("on", "off"):
+            return False
+        if old.state == new.state:
+            return False
+        entity = er.async_get(self.hass).async_get(entity_id)
+        if entity is None or entity.platform != BN_DOMAIN:
+            return False
+        return (entity.device_class or entity.original_device_class) == (
+            BN_BATTERY_LOW_DEVICE_CLASS
+        )
+
+    async def _on_low_sensor_changed(self, _event: Event) -> None:
+        """A Battery Notes low sensor flipped with no threshold event: reconcile."""
+        if not self.hass.is_running:
+            return  # the start-up reconcile covers it
+        await self._reconcile()
 
     async def _on_register_request(self, _event: Event) -> None:
         """Home Keeper asked its companions to announce themselves.
