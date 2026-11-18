@@ -28,6 +28,7 @@ from .const import (
     BN_BATTERY_LEVEL_DEVICE_CLASS,
     BN_BATTERY_LOW_DEVICE_CLASS,
     BN_DOMAIN,
+    BN_EVENT_INCREASED,
     BN_EVENT_NOT_REPORTED,
     BN_EVENT_REPLACED,
     BN_EVENT_THRESHOLD,
@@ -186,6 +187,9 @@ class BatteryNotesGlue:
             bus.async_listen(BN_EVENT_REPLACED, self._on_replaced)
         )
         self.entry.async_on_unload(
+            bus.async_listen(BN_EVENT_INCREASED, self._on_increased)
+        )
+        self.entry.async_on_unload(
             bus.async_listen(BN_EVENT_NOT_REPORTED, self._on_not_reported)
         )
         self.entry.async_on_unload(
@@ -325,14 +329,25 @@ class BatteryNotesGlue:
                 )
                 _LOGGER.debug("Armed battery task %s", action.task_id)
         elif isinstance(action, logic.ClearTask):
-            if self._hk_ready("complete_task"):
+            if action.replaced:
+                if self._hk_ready("complete_task"):
+                    await self.hass.services.async_call(
+                        HK_DOMAIN,
+                        "complete_task",
+                        {"task_id": action.task_id, "origin": ORIGIN},
+                        blocking=True,
+                    )
+                    _LOGGER.debug("Completed battery task %s", action.task_id)
+            elif self._hk_ready("skip_task"):
+                # The level recovered on its own. A skip sends the task dormant but
+                # records no completion and takes nothing off the stock count.
                 await self.hass.services.async_call(
                     HK_DOMAIN,
-                    "complete_task",
+                    "skip_task",
                     {"task_id": action.task_id, "origin": ORIGIN},
                     blocking=True,
                 )
-                _LOGGER.debug("Cleared battery task %s", action.task_id)
+                _LOGGER.debug("Cleared battery task %s without a completion", action.task_id)
         elif isinstance(action, logic.DeleteTask):
             if self._hk_ready("delete_task"):
                 # ``force`` because our own tasks are deletion-protected while our
@@ -462,9 +477,22 @@ class BatteryNotesGlue:
             return
         async with self._lock:
             tasks = await self._list_tasks()
-            action = logic.plan_battery_cleared(tasks, device_id=device_id)
+            action = logic.plan_battery_cleared(
+                tasks, device_id=device_id, replaced=True
+            )
             if action is not None:
                 await self._execute(action)
+
+    async def _on_increased(self, event: Event) -> None:
+        """A level jump from a low battery shows a new cell, so record it.
+
+        The user may never press "Battery replaced". Battery Notes sends the threshold
+        event first (the recovery), then this one, so the task is already dormant and
+        waits for this replacement.
+        """
+        if not logic.is_replacement_jump(event.data):
+            return
+        await self._on_replaced(event)
 
     async def _on_not_reported(self, event: Event) -> None:
         """A battery hasn't reported in a while → treat as suspected-dead, arm a task.

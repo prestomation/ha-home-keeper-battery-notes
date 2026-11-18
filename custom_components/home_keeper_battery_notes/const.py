@@ -40,6 +40,7 @@ ORIGIN = DOMAIN
 BN_DOMAIN = "battery_notes"
 BN_EVENT_THRESHOLD = "battery_notes_battery_threshold"
 BN_EVENT_REPLACED = "battery_notes_battery_replaced"
+BN_EVENT_INCREASED = "battery_notes_battery_increased"
 # A dead battery usually stops reporting (its level goes unknown/unavailable), so it
 # never crosses the *low* threshold — no THRESHOLD event fires and the battery-low
 # binary sensor never reads "on". Battery Notes surfaces this instead as "not
