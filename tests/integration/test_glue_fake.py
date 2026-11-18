@@ -14,13 +14,15 @@ import pytest
 # Python too old for the Home Assistant the fake needs makes pip resolve an older
 # Home Assistant that raises ImportError here. A skip made that look like a
 # deliberate exclusion, and this lane reported green while it ran nothing.
-from home_keeper.testing import async_setup_fake_home_keeper
+from home_keeper import recurrence as hk_recurrence
+from home_keeper.testing import async_setup_fake_home_keeper as _setup_plain_fake
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant, SupportsResponse
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.home_keeper_battery_notes.const import (
@@ -44,6 +46,26 @@ from custom_components.home_keeper_battery_notes.const import (
 )
 
 DEVICE = "dev_front_door"
+
+
+async def async_setup_fake_home_keeper(hass: HomeAssistant):
+    """Home Keeper's fake, plus a ``skip_task`` service it does not have yet.
+
+    The real Home Keeper has ``skip_task``. It sends the task to its next occurrence
+    (a triggered task goes dormant), keeps the task's ``completions`` as they are, and
+    draws nothing off a part. This stand-in does the same with the real
+    ``recurrence.skip_occurrence``, so the glue is tested against that behaviour.
+    """
+    hk = await _setup_plain_fake(hass)
+
+    async def _skip_task(call) -> None:
+        task = hk.tasks[call.data["task_id"]]
+        hk.tasks[task["id"]] = hk_recurrence.skip_occurrence(
+            dict(task), now=dt_util.now()
+        )
+
+    hass.services.async_register(HK_DOMAIN, "skip_task", _skip_task)
+    return hk
 
 
 async def _setup_glue(hass: HomeAssistant) -> MockConfigEntry:
@@ -1324,3 +1346,77 @@ async def test_removal_hands_a_counted_appliance_back(hass: HomeAssistant) -> No
     kept = hk.assets[asset["id"]]
     assert kept["managed_by"] is None
     assert hk.part_named(asset["id"], "AAA")["stock"] == 4
+
+
+# ── a battery that flaps around the threshold ────────────────────────────────
+async def test_flapping_sensor_adds_no_completion_and_uses_no_stock(
+    hass: HomeAssistant,
+) -> None:
+    # A coin cell at the threshold turns the low sensor on and off all day (#36).
+    # Each "off" is a recovery with no new battery. It must not record a replacement
+    # and must not take a cell off the count.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+    asset = _stock_asset(hk)
+    part = hk.part_named(asset["id"], "CR2032")
+    await _set_stock(hass, asset, part, 5)
+
+    for _ in range(4):
+        await _fire_threshold(hass, low=False)
+        task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+        assert task["next_due"] is None  # the task still goes dormant
+        await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+        assert hk.get_task_by_source(DOMAIN, device_id=DEVICE)["next_due"]  # armed
+
+    await _fire_threshold(hass, low=False)
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task["next_due"] is None
+    assert task.get("completions", []) == []
+    assert task.get("last_completed") is None
+    assert hk.part_named(asset["id"], "CR2032")["stock"] == 5
+    ours = [t for t in hk.tasks.values() if (t.get("source") or {}).get(DOMAIN)]
+    assert len(ours) == 1
+
+
+async def test_replacement_after_flapping_still_records_and_uses_stock(
+    hass: HomeAssistant,
+) -> None:
+    # A real replacement keeps its behaviour: one completion, one cell off the count.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+    asset = _stock_asset(hk)
+    part = hk.part_named(asset["id"], "CR2032")
+    await _set_stock(hass, asset, part, 5)
+    await _fire_threshold(hass, low=False)  # flap: no completion
+    await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+
+    hass.bus.async_fire(BN_EVENT_REPLACED, {"device_id": DEVICE})
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task["next_due"] is None
+    assert len(task["completions"]) == 1
+    assert hk.part_named(asset["id"], "CR2032")["stock"] == 4
+
+
+async def test_reconcile_recovery_records_no_completion(hass: HomeAssistant) -> None:
+    # The startup reconcile clears a task whose sensor reads "off". Like a live
+    # recovery, it is not a replacement.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+    device_id = _make_bn_low_sensor(hass, unique="flapper", state="off")
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {"device_id": device_id, "device_name": "x", "battery_low": True},
+    )
+    await hass.async_block_till_done()
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert task["next_due"] is None
+    assert task.get("completions", []) == []

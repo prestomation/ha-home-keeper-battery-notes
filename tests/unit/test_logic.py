@@ -360,6 +360,11 @@ def test_resolve_rechargeable_mode_migrates_the_legacy_boolean():
 def test_clear_armed_task_returns_clear_action():
     tasks = [_task("dev1", next_due="2026-06-01T00:00:00-04:00")]
     assert L.plan_battery_cleared(tasks, device_id="dev1") == L.ClearTask("task_dev1", "dev1")
+    # A recovery alone is not a replacement; only the replaced event records one.
+    assert L.ClearTask("task_dev1", "dev1").replaced is False
+    assert L.plan_battery_cleared(tasks, device_id="dev1", replaced=True) == L.ClearTask(
+        "task_dev1", "dev1", True
+    )
 
 
 def test_clear_dormant_or_absent_is_noop():

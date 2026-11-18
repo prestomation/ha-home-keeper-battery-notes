@@ -502,7 +502,7 @@ def test_notes_are_byte_identical_to_the_awk_it_replaced(version):
 # The complete set of issues the real CHANGELOG claims to close. Pinned rather than
 # recomputed: this is the list that decides whose issue gets closed, so a parser change
 # that quietly adds or drops one has to show up as a failing test, not a silent diff.
-_KNOWN_ISSUES = frozenset({18})
+_KNOWN_ISSUES = frozenset({18, 36})
 
 
 def test_real_changelog_yields_exactly_the_known_issue_set():

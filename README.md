@@ -44,7 +44,8 @@ If one of them is missing, nothing shows up. Install the first two before you ad
   per battery type, and a replaced battery comes off the count. See
   [Battery stock](#battery-stock).
 - **You replace it, from either side** → the two stay in sync (check the task off in Home
-  Keeper, or press Battery Notes' *Battery Replaced* button / let the level recover).
+  Keeper, or press Battery Notes' *Battery Replaced* button). A level that only recovers
+  clears the task but records no replacement.
 - **Between low events the task is dormant** — it leaves the to-do list and calendar and
   sits in Home Keeper's collapsed **Monitored** section, so only batteries that actually
   need attention show as due, while replacement **history** accumulates on the task.
@@ -90,7 +91,7 @@ this bridge to anyone who has Battery Notes installed but hasn't added it yet.
 
 - **Task name template** — default `Replace battery: {device_name}`.
 - **Two-way sync** — completing in Home Keeper marks the battery replaced in Battery Notes (default on).
-- **Clear on recovery** — clear the task if a battery's level recovers on its own (default on).
+- **Clear on recovery** — clear the task if a battery's level recovers on its own (default on). This records no completion and takes nothing off the stock count, because no new battery went in.
 - **Rechargeable batteries** — charge them, ignore them, or replace them (default **ignore**; see below).
 - **Charge task name template** — default `Charge battery: {device_name}`.
 - **Flag batteries that stop reporting** — also flag a battery that's gone silent (default **off**; see below).

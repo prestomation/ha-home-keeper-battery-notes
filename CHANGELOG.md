@@ -4,6 +4,12 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
+## [0.5.0b3] - 2026-11-18
+
+### Fixed
+
+- **Recovery without a completion.** A battery that recovers by itself now clears its task with no completion and no cell off the stock count. A new battery you report still records a completion. (Fixes #36)
+
 ## [0.5.0b1] - 2026-11-10
 
 ### Fixed

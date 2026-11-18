@@ -73,10 +73,18 @@ class ArmTask:
 
 @dataclass(frozen=True)
 class ClearTask:
-    """Clear an armed task (call ``home_keeper.complete_task``)."""
+    """Clear an armed task.
+
+    With *replaced* true, a new battery went in: call ``home_keeper.complete_task``,
+    which records the replacement and takes the battery off the stock count. With
+    *replaced* false, the level only recovered by itself: call
+    ``home_keeper.skip_task``, which sends the task dormant and records no completion
+    and no stock use. A cell at the threshold can recover many times with no new battery.
+    """
 
     task_id: str
     device_id: str
+    replaced: bool = False
 
 
 @dataclass(frozen=True)
@@ -379,15 +387,18 @@ def plan_battery_low(
     return RecreateTask(task["id"], device_id, payload)
 
 
-def plan_battery_cleared(tasks: list[dict], *, device_id: str) -> Action | None:
+def plan_battery_cleared(
+    tasks: list[dict], *, device_id: str, replaced: bool = False
+) -> Action | None:
     """Decide what to do when *device_id*'s battery is replaced or recovers.
 
-    Armed → clear (records a completion, goes dormant). Dormant/absent → nothing.
+    Armed → clear, goes dormant. A clear with *replaced* true records a completion;
+    a recovery alone does not (see :class:`ClearTask`). Dormant/absent → nothing.
     """
     task = task_for_device(tasks, device_id)
     if task is None or not is_armed(task):
         return None
-    return ClearTask(task["id"], device_id)
+    return ClearTask(task["id"], device_id, replaced)
 
 
 def plan_reconcile(
