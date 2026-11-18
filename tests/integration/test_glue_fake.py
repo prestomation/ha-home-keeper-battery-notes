@@ -1600,3 +1600,44 @@ async def test_jump_then_recovery_then_replaced_records_one_replacement(
     await _fire_replaced(hass)
 
     _assert_one_replacement(hk, asset, stock=4)
+
+
+# ── a charge task: the recovery IS the charge ────────────────────────────────
+async def test_charge_task_recovery_records_a_charge_and_no_stock_use(
+    hass: HomeAssistant,
+) -> None:
+    # A rechargeable in "charge" mode arms on every drain and clears on every charge.
+    # Each charge is a completion on the one task. It is not a replacement, so it
+    # draws nothing off the stock count.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_RECHARGEABLE_MODE: "charge"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    for cycle in (1, 2):
+        await _fire_typed_low(hass, battery_type="Rechargeable", battery_quantity=1)
+        assert hk.get_task_by_source(DOMAIN, device_id=DEVICE)["next_due"]
+        await _fire_threshold(hass, low=False)
+        task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+        assert task["next_due"] is None
+        assert len(task["completions"]) == cycle
+        assert not task.get("skips")
+        assert all("stock_drawn" not in c for c in task["completions"])
+
+
+async def test_replace_task_recovery_still_records_a_skip_only(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+
+    await _fire_threshold(hass, low=False)
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task["next_due"] is None
+    assert task.get("completions", []) == []
+    assert len(task["skips"]) == 1

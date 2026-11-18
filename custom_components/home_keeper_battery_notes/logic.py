@@ -81,6 +81,8 @@ class ClearTask:
     *replaced* false, the level only recovered by itself: call
     ``home_keeper.skip_task``, which sends the task dormant and records no completion
     and no stock use. A cell at the threshold can recover many times with no new battery.
+    A charge task always has *replaced* true: its recovery is the charge, and each
+    charge is a completion on the one task. A charge task has no stock link.
     """
 
     task_id: str
@@ -443,7 +445,8 @@ def plan_battery_cleared(
     """Decide what to do when *device_id*'s battery is replaced or recovers.
 
     Armed → clear, goes dormant. A clear with *replaced* true records a completion;
-    a recovery alone does not (see :class:`ClearTask`). A replacement also records
+    a recovery alone does not (see :class:`ClearTask`), except for a charge task,
+    whose recovery is the charge. A replacement also records
     on a dormant task whose last clear was a recovery (see
     :func:`has_unconfirmed_recovery`). Otherwise dormant/absent → nothing.
     """
@@ -452,7 +455,8 @@ def plan_battery_cleared(
         return None
     if not is_armed(task) and not (replaced and has_unconfirmed_recovery(task)):
         return None
-    return ClearTask(task["id"], device_id, replaced)
+    is_charge = task_kind(task) == KIND_CHARGE
+    return ClearTask(task["id"], device_id, replaced or is_charge)
 
 
 def plan_reconcile(
@@ -553,7 +557,9 @@ def plan_reconcile(
         if device_id in handled:
             continue
         if device_id in recovered_devices and is_armed(task):
-            actions.append(ClearTask(task["id"], device_id))
+            actions.append(
+                ClearTask(task["id"], device_id, task_kind(task) == KIND_CHARGE)
+            )
     return actions
 
 

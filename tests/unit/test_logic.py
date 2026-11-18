@@ -547,7 +547,7 @@ def test_reconcile_leaves_a_matching_charge_task_alone():
         rechargeable_mode="charge",
         rechargeable_devices=frozenset({"valve"}),
     )
-    assert actions == [L.ClearTask("task_valve", "valve")]
+    assert actions == [L.ClearTask("task_valve", "valve", True)]
 
 
 def test_reconcile_ignores_foreign_tasks():
@@ -1214,3 +1214,26 @@ def test_a_skip_and_a_completion_with_the_same_timestamp_owe_nothing():
     stamp = "2026-11-02T10:00:00.123456+00:00"
     task = _dormant(skips=[{"ts": stamp}], last_completed=stamp)
     assert not L.has_unconfirmed_recovery(task)
+
+
+def test_recovery_of_a_charge_task_records_a_charge():
+    tasks = [_charge_task("valve")]
+    assert L.plan_battery_cleared(tasks, device_id="valve") == L.ClearTask(
+        "task_valve", "valve", True
+    )
+
+
+def test_reconcile_recovery_of_a_charge_task_records_a_charge():
+    tasks = [_charge_task("valve")]
+    actions = L.plan_reconcile(
+        tasks, {}, {"valve"}, config_entry_id=CFG, name_template=TMPL
+    )
+    assert actions == [L.ClearTask("task_valve", "valve", True)]
+
+
+def test_reconcile_recovery_of_a_replace_task_records_no_completion():
+    tasks = [_task("dev1")]
+    actions = L.plan_reconcile(
+        tasks, {}, {"dev1"}, config_entry_id=CFG, name_template=TMPL
+    )
+    assert actions == [L.ClearTask("task_dev1", "dev1", False)]
