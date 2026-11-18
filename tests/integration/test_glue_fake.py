@@ -1570,3 +1570,33 @@ async def test_level_jump_without_a_low_battery_records_nothing(
 
     task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
     assert task.get("completions", []) == []
+
+
+async def test_recovery_then_jump_then_replaced_records_one_replacement(
+    hass: HomeAssistant,
+) -> None:
+    # The full real order: the low sensor turns off, the level jump follows, and the
+    # user presses the button last. Only one of the three may record.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    asset = await _typed_low_with_stock(hass, hk)
+
+    await _fire_threshold(hass, low=False)
+    await _fire_increased(hass, level=95, previous=10)
+    await _fire_replaced(hass)
+
+    _assert_one_replacement(hk, asset, stock=4)
+
+
+async def test_jump_then_recovery_then_replaced_records_one_replacement(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    asset = await _typed_low_with_stock(hass, hk)
+
+    await _fire_increased(hass, level=95, previous=10)
+    await _fire_threshold(hass, low=False)
+    await _fire_replaced(hass)
+
+    _assert_one_replacement(hk, asset, stock=4)

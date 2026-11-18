@@ -1204,3 +1204,13 @@ def test_replacement_jump_starts_at_or_below_the_low_threshold():
     assert not L.is_replacement_jump(event(100, 0))  # no level: sent on every recovery
     assert not L.is_replacement_jump({})
     assert not L.is_replacement_jump(event("unknown", 10))
+
+
+def test_a_skip_and_a_completion_with_the_same_timestamp_owe_nothing():
+    # Home Keeper stamps a skip and a completion with its own clock, so a tie can
+    # only come from a completion back-dated to the exact microsecond of a skip. The
+    # comparison is strict, so a tie reads as "nothing owed". It never invents a
+    # second completion.
+    stamp = "2026-11-02T10:00:00.123456+00:00"
+    task = _dormant(skips=[{"ts": stamp}], last_completed=stamp)
+    assert not L.has_unconfirmed_recovery(task)
