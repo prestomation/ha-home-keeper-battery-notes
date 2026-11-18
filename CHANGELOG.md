@@ -8,7 +8,7 @@ semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — f
 
 ### Fixed
 
-- **Recovery without a completion.** A battery that recovers by itself now clears its task with no completion and no cell off the stock count. A new battery you report still records a completion. (Fixes #36)
+- **Recovery without a completion.** A battery that recovers by itself now clears its task with no completion and no cell off the stock count. A new battery you report, or a level that jumps up from low, still records one completion. (Fixes #36)
 
 ## [0.5.0b1] - 2026-11-10
 

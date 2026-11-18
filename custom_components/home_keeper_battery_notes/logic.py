@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from .const import (
@@ -387,16 +388,69 @@ def plan_battery_low(
     return RecreateTask(task["id"], device_id, payload)
 
 
+def _parse_ts(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def has_unconfirmed_recovery(task: dict) -> bool:
+    """Whether the last thing that cleared *task* was a recovery, not a replacement.
+
+    A recovery calls ``skip_task``, which logs a skip and no completion. The skip is
+    newer than ``last_completed`` until a real replacement is recorded. Battery Notes
+    often reports the new level (the recovery) before the user presses "Battery
+    replaced", so this tells the replaced event that a replacement is still owed.
+    """
+    skips = [t for t in (_parse_ts(e.get("ts")) for e in task.get("skips") or []) if t]
+    if not skips:
+        return False
+    last_done = _parse_ts(task.get("last_completed"))
+    return last_done is None or max(skips) > last_done
+
+
+def is_replacement_jump(event_data: dict[str, Any]) -> bool:
+    """Whether a Battery Notes ``battery_increased`` event shows a new cell.
+
+    The event fires for a rise of at least the device's increase threshold. A rise
+    that starts at or below the low threshold is a new cell. A rise from a healthy
+    level is not. A sensor with no level sends 100 after 0 on every recovery, so that
+    pair shows nothing.
+    """
+    level = event_data.get("battery_level")
+    previous = event_data.get("previous_battery_level")
+    low_threshold = event_data.get("battery_low_threshold")
+    try:
+        level, previous, low_threshold = (
+            float(level),
+            float(previous),
+            float(low_threshold),
+        )
+    except (TypeError, ValueError):
+        return False
+    if previous == 0 and level == 100:
+        return False
+    return previous <= low_threshold
+
+
 def plan_battery_cleared(
     tasks: list[dict], *, device_id: str, replaced: bool = False
 ) -> Action | None:
     """Decide what to do when *device_id*'s battery is replaced or recovers.
 
     Armed → clear, goes dormant. A clear with *replaced* true records a completion;
-    a recovery alone does not (see :class:`ClearTask`). Dormant/absent → nothing.
+    a recovery alone does not (see :class:`ClearTask`). A replacement also records
+    on a dormant task whose last clear was a recovery (see
+    :func:`has_unconfirmed_recovery`). Otherwise dormant/absent → nothing.
     """
     task = task_for_device(tasks, device_id)
-    if task is None or not is_armed(task):
+    if task is None:
+        return None
+    if not is_armed(task) and not (replaced and has_unconfirmed_recovery(task)):
         return None
     return ClearTask(task["id"], device_id, replaced)
 

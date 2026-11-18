@@ -45,7 +45,8 @@ If one of them is missing, nothing shows up. Install the first two before you ad
   [Battery stock](#battery-stock).
 - **You replace it, from either side** → the two stay in sync (check the task off in Home
   Keeper, or press Battery Notes' *Battery Replaced* button). A level that only recovers
-  clears the task but records no replacement.
+  clears the task but records no replacement. A jump up from a low level, or a later
+  press of that button, records it.
 - **Between low events the task is dormant** — it leaves the to-do list and calendar and
   sits in Home Keeper's collapsed **Monitored** section, so only batteries that actually
   need attention show as due, while replacement **history** accumulates on the task.

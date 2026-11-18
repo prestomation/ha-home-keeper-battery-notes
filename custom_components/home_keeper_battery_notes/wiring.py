@@ -28,6 +28,7 @@ from .const import (
     BN_BATTERY_LEVEL_DEVICE_CLASS,
     BN_BATTERY_LOW_DEVICE_CLASS,
     BN_DOMAIN,
+    BN_EVENT_INCREASED,
     BN_EVENT_NOT_REPORTED,
     BN_EVENT_REPLACED,
     BN_EVENT_THRESHOLD,
@@ -184,6 +185,9 @@ class BatteryNotesGlue:
         )
         self.entry.async_on_unload(
             bus.async_listen(BN_EVENT_REPLACED, self._on_replaced)
+        )
+        self.entry.async_on_unload(
+            bus.async_listen(BN_EVENT_INCREASED, self._on_increased)
         )
         self.entry.async_on_unload(
             bus.async_listen(BN_EVENT_NOT_REPORTED, self._on_not_reported)
@@ -478,6 +482,17 @@ class BatteryNotesGlue:
             )
             if action is not None:
                 await self._execute(action)
+
+    async def _on_increased(self, event: Event) -> None:
+        """A level jump from a low battery shows a new cell, so record it.
+
+        The user may never press "Battery replaced". Battery Notes sends the threshold
+        event first (the recovery), then this one, so the task is already dormant and
+        waits for this replacement.
+        """
+        if not logic.is_replacement_jump(event.data):
+            return
+        await self._on_replaced(event)
 
     async def _on_not_reported(self, event: Event) -> None:
         """A battery hasn't reported in a while → treat as suspected-dead, arm a task.
