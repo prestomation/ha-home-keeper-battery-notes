@@ -360,6 +360,11 @@ def test_resolve_rechargeable_mode_migrates_the_legacy_boolean():
 def test_clear_armed_task_returns_clear_action():
     tasks = [_task("dev1", next_due="2026-06-01T00:00:00-04:00")]
     assert L.plan_battery_cleared(tasks, device_id="dev1") == L.ClearTask("task_dev1", "dev1")
+    # A recovery alone is not a replacement; only the replaced event records one.
+    assert L.ClearTask("task_dev1", "dev1").replaced is False
+    assert L.plan_battery_cleared(tasks, device_id="dev1", replaced=True) == L.ClearTask(
+        "task_dev1", "dev1", True
+    )
 
 
 def test_clear_dormant_or_absent_is_noop():
@@ -542,7 +547,7 @@ def test_reconcile_leaves_a_matching_charge_task_alone():
         rechargeable_mode="charge",
         rechargeable_devices=frozenset({"valve"}),
     )
-    assert actions == [L.ClearTask("task_valve", "valve")]
+    assert actions == [L.ClearTask("task_valve", "valve", True)]
 
 
 def test_reconcile_ignores_foreign_tasks():
@@ -1158,3 +1163,77 @@ def test_reconcile_backfills_no_chip_on_a_linked_task():
         name_template=TMPL,
     )
     assert not any(isinstance(a, L.UpdateChips) for a in actions)
+
+
+# ── a recovery that waits for its replacement ────────────────────────────────
+def _dormant(**extra):
+    return {**_task("dev1", next_due=None), **extra}
+
+
+def test_unconfirmed_recovery_needs_a_skip_newer_than_the_last_completion():
+    skip = {"ts": "2026-11-02T10:00:00+00:00"}
+    assert not L.has_unconfirmed_recovery(_dormant())
+    assert L.has_unconfirmed_recovery(_dormant(skips=[skip]))
+    done_after = {"last_completed": "2026-11-03T10:00:00+00:00", "skips": [skip]}
+    assert not L.has_unconfirmed_recovery(_dormant(**done_after))
+    done_before = {"last_completed": "2026-11-01T10:00:00+00:00", "skips": [skip]}
+    assert L.has_unconfirmed_recovery(_dormant(**done_before))
+
+
+def test_replaced_clears_a_dormant_task_with_an_unconfirmed_recovery():
+    skip = [{"ts": "2026-11-02T10:00:00+00:00"}]
+    tasks = [_dormant(skips=skip)]
+    assert L.plan_battery_cleared(tasks, device_id="dev1", replaced=True) == L.ClearTask(
+        "task_dev1", "dev1", True
+    )
+    # A recovery alone never acts on a dormant task.
+    assert L.plan_battery_cleared(tasks, device_id="dev1") is None
+
+
+def test_replacement_jump_starts_at_or_below_the_low_threshold():
+    def event(level, previous, low=15):
+        return {
+            "battery_level": level,
+            "previous_battery_level": previous,
+            "battery_low_threshold": low,
+        }
+
+    assert L.is_replacement_jump(event(95, 10))
+    assert L.is_replacement_jump(event(60, 15))
+    assert not L.is_replacement_jump(event(90, 60))
+    assert not L.is_replacement_jump(event(100, 0))  # no level: sent on every recovery
+    assert not L.is_replacement_jump({})
+    assert not L.is_replacement_jump(event("unknown", 10))
+
+
+def test_a_skip_and_a_completion_with_the_same_timestamp_owe_nothing():
+    # Home Keeper stamps a skip and a completion with its own clock, so a tie can
+    # only come from a completion back-dated to the exact microsecond of a skip. The
+    # comparison is strict, so a tie reads as "nothing owed". It never invents a
+    # second completion.
+    stamp = "2026-11-02T10:00:00.123456+00:00"
+    task = _dormant(skips=[{"ts": stamp}], last_completed=stamp)
+    assert not L.has_unconfirmed_recovery(task)
+
+
+def test_recovery_of_a_charge_task_records_a_charge():
+    tasks = [_charge_task("valve")]
+    assert L.plan_battery_cleared(tasks, device_id="valve") == L.ClearTask(
+        "task_valve", "valve", True
+    )
+
+
+def test_reconcile_recovery_of_a_charge_task_records_a_charge():
+    tasks = [_charge_task("valve")]
+    actions = L.plan_reconcile(
+        tasks, {}, {"valve"}, config_entry_id=CFG, name_template=TMPL
+    )
+    assert actions == [L.ClearTask("task_valve", "valve", True)]
+
+
+def test_reconcile_recovery_of_a_replace_task_records_no_completion():
+    tasks = [_task("dev1")]
+    actions = L.plan_reconcile(
+        tasks, {}, {"dev1"}, config_entry_id=CFG, name_template=TMPL
+    )
+    assert actions == [L.ClearTask("task_dev1", "dev1", False)]

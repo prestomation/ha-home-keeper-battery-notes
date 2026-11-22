@@ -14,17 +14,20 @@ import pytest
 # Python too old for the Home Assistant the fake needs makes pip resolve an older
 # Home Assistant that raises ImportError here. A skip made that look like a
 # deliberate exclusion, and this lane reported green while it ran nothing.
-from home_keeper.testing import async_setup_fake_home_keeper
+from home_keeper import recurrence as hk_recurrence
+from home_keeper.testing import async_setup_fake_home_keeper as _setup_plain_fake
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant, SupportsResponse
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.home_keeper_battery_notes.const import (
     BN_DOMAIN,
+    BN_EVENT_INCREASED,
     BN_EVENT_NOT_REPORTED,
     BN_EVENT_REPLACED,
     BN_EVENT_THRESHOLD,
@@ -44,6 +47,26 @@ from custom_components.home_keeper_battery_notes.const import (
 )
 
 DEVICE = "dev_front_door"
+
+
+async def async_setup_fake_home_keeper(hass: HomeAssistant):
+    """Home Keeper's fake, plus a ``skip_task`` service it does not have yet.
+
+    The real Home Keeper has ``skip_task``. It sends the task to its next occurrence
+    (a triggered task goes dormant), keeps the task's ``completions`` as they are, and
+    draws nothing off a part. This stand-in does the same with the real
+    ``recurrence.skip_occurrence``, so the glue is tested against that behaviour.
+    """
+    hk = await _setup_plain_fake(hass)
+
+    async def _skip_task(call) -> None:
+        task = hk.tasks[call.data["task_id"]]
+        hk.tasks[task["id"]] = hk_recurrence.skip_occurrence(
+            dict(task), now=dt_util.now()
+        )
+
+    hass.services.async_register(HK_DOMAIN, "skip_task", _skip_task)
+    return hk
 
 
 async def _setup_glue(hass: HomeAssistant) -> MockConfigEntry:
@@ -1324,3 +1347,297 @@ async def test_removal_hands_a_counted_appliance_back(hass: HomeAssistant) -> No
     kept = hk.assets[asset["id"]]
     assert kept["managed_by"] is None
     assert hk.part_named(asset["id"], "AAA")["stock"] == 4
+
+
+# ── a battery that flaps around the threshold ────────────────────────────────
+async def test_flapping_sensor_adds_no_completion_and_uses_no_stock(
+    hass: HomeAssistant,
+) -> None:
+    # A coin cell at the threshold turns the low sensor on and off all day (#36).
+    # Each "off" is a recovery with no new battery. It must not record a replacement
+    # and must not take a cell off the count.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+    asset = _stock_asset(hk)
+    part = hk.part_named(asset["id"], "CR2032")
+    await _set_stock(hass, asset, part, 5)
+
+    for _ in range(4):
+        await _fire_threshold(hass, low=False)
+        task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+        assert task["next_due"] is None  # the task still goes dormant
+        await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+        assert hk.get_task_by_source(DOMAIN, device_id=DEVICE)["next_due"]  # armed
+
+    await _fire_threshold(hass, low=False)
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task["next_due"] is None
+    assert task.get("completions", []) == []
+    assert task.get("last_completed") is None
+    assert hk.part_named(asset["id"], "CR2032")["stock"] == 5
+    ours = [t for t in hk.tasks.values() if (t.get("source") or {}).get(DOMAIN)]
+    assert len(ours) == 1
+
+
+async def test_replacement_after_flapping_still_records_and_uses_stock(
+    hass: HomeAssistant,
+) -> None:
+    # A real replacement keeps its behaviour: one completion, one cell off the count.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+    asset = _stock_asset(hk)
+    part = hk.part_named(asset["id"], "CR2032")
+    await _set_stock(hass, asset, part, 5)
+    await _fire_threshold(hass, low=False)  # flap: no completion
+    await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+
+    hass.bus.async_fire(BN_EVENT_REPLACED, {"device_id": DEVICE})
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task["next_due"] is None
+    assert len(task["completions"]) == 1
+    assert hk.part_named(asset["id"], "CR2032")["stock"] == 4
+
+
+async def test_reconcile_recovery_records_no_completion(hass: HomeAssistant) -> None:
+    # The startup reconcile clears a task whose sensor reads "off". Like a live
+    # recovery, it is not a replacement.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = await _setup_glue(hass)
+    device_id = _make_bn_low_sensor(hass, unique="flapper", state="off")
+    hass.bus.async_fire(
+        BN_EVENT_THRESHOLD,
+        {"device_id": device_id, "device_name": "x", "battery_low": True},
+    )
+    await hass.async_block_till_done()
+
+    await entry.runtime_data._reconcile()
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert task["next_due"] is None
+    assert task.get("completions", []) == []
+
+
+# ── event order: the recovery comes before the replaced event ────────────────
+async def _typed_low_with_stock(hass: HomeAssistant, hk, count: float = 5):
+    await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+    asset = _stock_asset(hk)
+    await _set_stock(hass, asset, hk.part_named(asset["id"], "CR2032"), count)
+    return asset
+
+
+async def _fire_replaced(hass: HomeAssistant) -> None:
+    hass.bus.async_fire(BN_EVENT_REPLACED, {"device_id": DEVICE})
+    await hass.async_block_till_done()
+
+
+def _assert_one_replacement(hk, asset, *, stock: float) -> None:
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task["next_due"] is None
+    assert len(task["completions"]) == 1
+    assert task["completions"][0]["stock_drawn"]["quantity"] == 1
+    assert task["last_completed"] == task["completions"][0]["ts"]
+    assert hk.part_named(asset["id"], "CR2032")["stock"] == stock
+
+
+async def test_recovery_then_replaced_records_one_replacement(
+    hass: HomeAssistant,
+) -> None:
+    # The user swaps the cell. The new level arrives first and the low sensor turns
+    # off. The user presses "Battery replaced" later.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    asset = await _typed_low_with_stock(hass, hk)
+
+    await _fire_threshold(hass, low=False)
+    await _fire_replaced(hass)
+
+    _assert_one_replacement(hk, asset, stock=4)
+
+
+async def test_replaced_then_recovery_records_one_replacement(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    asset = await _typed_low_with_stock(hass, hk)
+
+    await _fire_replaced(hass)
+    await _fire_threshold(hass, low=False)
+
+    _assert_one_replacement(hk, asset, stock=4)
+
+
+async def test_flapping_then_replaced_records_one_replacement(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    asset = await _typed_low_with_stock(hass, hk)
+
+    for _ in range(3):
+        await _fire_threshold(hass, low=False)
+        await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+    await _fire_threshold(hass, low=False)
+    await _fire_replaced(hass)
+
+    _assert_one_replacement(hk, asset, stock=4)
+
+
+async def test_replaced_after_a_user_completion_does_not_record_twice(
+    hass: HomeAssistant,
+) -> None:
+    # Recovery, then the user checks the task off in Home Keeper. Home Keeper's
+    # completion is mirrored to Battery Notes, which fires its replaced event. That
+    # event must not add a second completion.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    asset = await _typed_low_with_stock(hass, hk)
+    await _fire_threshold(hass, low=False)
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    await hass.services.async_call(
+        HK_DOMAIN, "complete_task", {"task_id": task["id"]}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    await _fire_replaced(hass)
+
+    _assert_one_replacement(hk, asset, stock=4)
+
+
+async def test_replaced_on_a_healthy_dormant_task_records_nothing(
+    hass: HomeAssistant,
+) -> None:
+    # A task that never had a recovery waiting is not touched by a replaced event
+    # that finds it dormant. This is the behaviour before this fix too.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+    await _fire_replaced(hass)  # completes the armed task: 1 completion
+    await _fire_replaced(hass)  # dormant, completion is the latest entry
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert len(task["completions"]) == 1
+
+
+async def _fire_increased(
+    hass: HomeAssistant, *, level: float, previous: float, low_threshold: float = 15
+) -> None:
+    hass.bus.async_fire(
+        BN_EVENT_INCREASED,
+        {
+            "device_id": DEVICE,
+            "battery_level": level,
+            "previous_battery_level": previous,
+            "battery_low_threshold": low_threshold,
+        },
+    )
+    await hass.async_block_till_done()
+
+
+async def test_level_jump_from_low_records_one_replacement(
+    hass: HomeAssistant,
+) -> None:
+    # Battery Notes fires the threshold event, then the increased event, for one
+    # new level. The jump past the increase threshold shows a new cell.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    asset = await _typed_low_with_stock(hass, hk)
+
+    await _fire_threshold(hass, low=False)
+    await _fire_increased(hass, level=95, previous=10)
+
+    _assert_one_replacement(hk, asset, stock=4)
+
+
+async def test_level_jump_without_a_low_battery_records_nothing(
+    hass: HomeAssistant,
+) -> None:
+    # A rise from a healthy level, and the 100/0 pair Battery Notes sends for a
+    # sensor with no level, are not proof of a new cell.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    await _typed_low_with_stock(hass, hk)
+    await _fire_threshold(hass, low=False)  # recovery with a skip waiting
+
+    await _fire_increased(hass, level=90, previous=60)
+    await _fire_increased(hass, level=100, previous=0)
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task.get("completions", []) == []
+
+
+async def test_recovery_then_jump_then_replaced_records_one_replacement(
+    hass: HomeAssistant,
+) -> None:
+    # The full real order: the low sensor turns off, the level jump follows, and the
+    # user presses the button last. Only one of the three may record.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    asset = await _typed_low_with_stock(hass, hk)
+
+    await _fire_threshold(hass, low=False)
+    await _fire_increased(hass, level=95, previous=10)
+    await _fire_replaced(hass)
+
+    _assert_one_replacement(hk, asset, stock=4)
+
+
+async def test_jump_then_recovery_then_replaced_records_one_replacement(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    asset = await _typed_low_with_stock(hass, hk)
+
+    await _fire_increased(hass, level=95, previous=10)
+    await _fire_threshold(hass, low=False)
+    await _fire_replaced(hass)
+
+    _assert_one_replacement(hk, asset, stock=4)
+
+
+# ── a charge task: the recovery IS the charge ────────────────────────────────
+async def test_charge_task_recovery_records_a_charge_and_no_stock_use(
+    hass: HomeAssistant,
+) -> None:
+    # A rechargeable in "charge" mode arms on every drain and clears on every charge.
+    # Each charge is a completion on the one task. It is not a replacement, so it
+    # draws nothing off the stock count.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_RECHARGEABLE_MODE: "charge"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    for cycle in (1, 2):
+        await _fire_typed_low(hass, battery_type="Rechargeable", battery_quantity=1)
+        assert hk.get_task_by_source(DOMAIN, device_id=DEVICE)["next_due"]
+        await _fire_threshold(hass, low=False)
+        task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+        assert task["next_due"] is None
+        assert len(task["completions"]) == cycle
+        assert not task.get("skips")
+        assert all("stock_drawn" not in c for c in task["completions"])
+
+
+async def test_replace_task_recovery_still_records_a_skip_only(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    await _fire_typed_low(hass, battery_type="CR2032", battery_quantity=1)
+
+    await _fire_threshold(hass, low=False)
+
+    task = hk.get_task_by_source(DOMAIN, device_id=DEVICE)
+    assert task["next_due"] is None
+    assert task.get("completions", []) == []
+    assert len(task["skips"]) == 1
