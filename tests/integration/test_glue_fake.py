@@ -1641,3 +1641,216 @@ async def test_replace_task_recovery_still_records_a_skip_only(
     assert task["next_due"] is None
     assert task.get("completions", []) == []
     assert len(task["skips"]) == 1
+
+
+# ── a threshold change moves the sensor without a Battery Notes event ──────────
+# Battery Notes fires its threshold event only when a new battery reading crosses the
+# threshold. A user who raises the threshold above the current level reloads the
+# entry: the low sensor turns on, but no event follows. The glue must watch the
+# sensor itself, or no task opens until the next restart.
+
+
+async def test_low_sensor_turning_on_opens_a_task_without_an_event(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    hass.set_state(CoreState.running)
+    device_id = _make_bn_battery_device(
+        hass, unique="thresh", low="off",
+        attributes={"battery_type": "AA", "battery_quantity": 2}, level="60",
+    )
+    low_id = next(
+        e.entity_id
+        for e in er.async_get(hass).entities.values()
+        if e.platform == BN_DOMAIN
+        and e.domain == "binary_sensor"
+        and e.device_id == device_id
+    )
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id) is None
+
+    # The user raises the threshold: the sensor goes off -> on. No event is fired.
+    hass.states.async_set(
+        low_id, "on", {"battery_type": "AA", "battery_quantity": 2}
+    )
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert task is not None
+    assert task["next_due"]  # born armed
+    assert task["notes"] == "2× AA · was at 60%"
+
+
+async def test_low_sensor_turning_off_clears_the_task_without_an_event(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    hass.set_state(CoreState.running)
+    device_id = _make_bn_battery_device(hass, unique="thresh2", low="on")
+    low_id = next(
+        e.entity_id
+        for e in er.async_get(hass).entities.values()
+        if e.platform == BN_DOMAIN
+        and e.domain == "binary_sensor"
+        and e.device_id == device_id
+    )
+    hass.states.async_set(low_id, "off")  # off -> ... first make the task exist
+    hass.states.async_set(low_id, "on")
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]
+
+    hass.states.async_set(low_id, "off")
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"] is None
+
+
+async def test_low_sensor_going_unavailable_changes_nothing(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    hass.set_state(CoreState.running)
+    device_id = _make_bn_battery_device(hass, unique="thresh3", low="off")
+    low_id = next(
+        e.entity_id
+        for e in er.async_get(hass).entities.values()
+        if e.platform == BN_DOMAIN
+        and e.domain == "binary_sensor"
+        and e.device_id == device_id
+    )
+    hass.states.async_set(low_id, "unavailable")
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id) is None
+
+
+def _low_sensor_id(hass: HomeAssistant, device_id: str) -> str:
+    return next(
+        e.entity_id
+        for e in er.async_get(hass).entities.values()
+        if e.platform == BN_DOMAIN
+        and e.domain == "binary_sensor"
+        and e.device_id == device_id
+    )
+
+
+async def test_low_sensor_turning_on_rearms_a_dormant_task(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    hass.set_state(CoreState.running)
+    device_id = _make_bn_battery_device(hass, unique="thresh4", low="off")
+    low_id = _low_sensor_id(hass, device_id)
+    hass.states.async_set(low_id, "on")
+    await hass.async_block_till_done()
+    first = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert first["next_due"]
+    hass.states.async_set(low_id, "off")  # the task goes dormant
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"] is None
+
+    hass.states.async_set(low_id, "on")
+    await hass.async_block_till_done()
+
+    ours = [t for t in hk.tasks.values() if (t.get("source") or {}).get(DOMAIN)]
+    assert len(ours) == 1  # no second task
+    again = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert again["id"] == first["id"]  # the same task, armed again
+    assert again["next_due"]
+
+
+async def test_low_sensor_turning_off_keeps_the_task_when_recovery_is_off(
+    hass: HomeAssistant,
+) -> None:
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_CLEAR_ON_RECOVERY: False}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.set_state(CoreState.running)
+    device_id = _make_bn_battery_device(hass, unique="thresh5", low="off")
+    low_id = _low_sensor_id(hass, device_id)
+    hass.states.async_set(low_id, "on")
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]
+
+    hass.states.async_set(low_id, "off")
+    await hass.async_block_till_done()
+
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]  # still armed
+
+
+# ── a threshold change that flips the low sensor, with the recovery rules ───────
+async def test_threshold_flip_off_skips_a_replace_task_and_keeps_the_stock(
+    hass: HomeAssistant,
+) -> None:
+    # A raised threshold turns the low sensor on. A lowered threshold turns it off
+    # again. No cell went in, so the flip off must not record a replacement or take a
+    # cell off the count (#36). A flip on opens the task as before.
+    hk = await async_setup_fake_home_keeper(hass)
+    await _setup_glue(hass)
+    hass.set_state(CoreState.running)
+    attrs = {"battery_type": "CR2032", "battery_quantity": 1}
+    device_id = _make_bn_battery_device(
+        hass, unique="flip1", low="off", attributes=attrs, level="30"
+    )
+    low_id = _low_sensor_id(hass, device_id)
+
+    hass.states.async_set(low_id, "on", attrs)  # flip on: no event, no task yet
+    await hass.async_block_till_done()
+    task = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert task is not None and task["next_due"]  # opened
+    asset = _stock_asset(hk)
+    await _set_stock(hass, asset, hk.part_named(asset["id"], "CR2032"), 5)
+
+    for _ in range(2):
+        hass.states.async_set(low_id, "off", attrs)  # flip off
+        await hass.async_block_till_done()
+        task = hk.get_task_by_source(DOMAIN, device_id=device_id)
+        assert task["next_due"] is None
+        hass.states.async_set(low_id, "on", attrs)  # flip on again
+        await hass.async_block_till_done()
+        assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]
+    hass.states.async_set(low_id, "off", attrs)
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert task["next_due"] is None
+    assert task.get("completions", []) == []
+    assert len(task["skips"]) == 3
+    assert hk.part_named(asset["id"], "CR2032")["stock"] == 5
+
+
+async def test_threshold_flip_off_keeps_the_completion_of_a_charge_task(
+    hass: HomeAssistant,
+) -> None:
+    # In "Charge it" mode the recovery is the charge, so a flip off records it.
+    hk = await async_setup_fake_home_keeper(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={}, options={OPT_RECHARGEABLE_MODE: "charge"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.set_state(CoreState.running)
+    attrs = {"battery_type": "Rechargeable", "battery_quantity": 1}
+    device_id = _make_bn_battery_device(
+        hass, unique="flip2", low="off", attributes=attrs, level="30"
+    )
+    low_id = _low_sensor_id(hass, device_id)
+
+    hass.states.async_set(low_id, "on", attrs)
+    await hass.async_block_till_done()
+    assert hk.get_task_by_source(DOMAIN, device_id=device_id)["next_due"]
+    hass.states.async_set(low_id, "off", attrs)
+    await hass.async_block_till_done()
+
+    task = hk.get_task_by_source(DOMAIN, device_id=device_id)
+    assert task["next_due"] is None
+    assert len(task["completions"]) == 1
+    assert not task.get("skips")
+    assert "stock_drawn" not in task["completions"][0]

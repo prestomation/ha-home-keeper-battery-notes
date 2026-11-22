@@ -67,6 +67,7 @@ guards), so a missing one causes no error, and no tasks.
 |---|---|
 | `battery_notes_battery_threshold` `battery_low: true` | create the task (born armed) if new, else `home_keeper.trigger_task` to re-arm |
 | `battery_notes_battery_threshold` `battery_low: false` | `home_keeper.complete_task` (records the replacement, goes dormant) |
+| A Battery Notes low sensor turns `on` or `off` with no event (for example, after you change a device's threshold) | the same as `battery_low: true` or `false`, through a full reconcile |
 | `battery_notes_battery_replaced` | `home_keeper.complete_task` (idempotent) |
 | `home_keeper_task_completed` (ours) | `battery_notes.set_battery_replaced` (two-way), with an `origin` guard so it never loops — skipped for charge tasks, which aren't replacements |
 
