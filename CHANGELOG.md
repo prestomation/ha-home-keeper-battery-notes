@@ -4,11 +4,17 @@ All notable changes to the Home Keeper — Battery Notes glue are documented her
 format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses
 semantic versioning (with PEP 440 pre-release suffixes — `bN`/`aN`/`rcN` — for betas).
 
-## [0.5.0b2] - 2026-11-17
+## [0.5.0b3] - 2026-11-22
 
 ### Fixed
 
 - **Battery tasks follow the low sensor.** A task now opens or clears when a Battery Notes low sensor changes, for example after you change a device's threshold. Before, it waited for the next restart. (Fixes prestomation/ha-home-keeper#570)
+
+## [0.5.0b2] - 2026-11-18
+
+### Fixed
+
+- **Recovery without a completion.** A Replace battery task that clears when the level recovers by itself now records no completion and takes no cell off the stock count. A new battery you report, or a level that jumps up from low, still records one completion. (Fixes #36)
 
 ## [0.5.0b1] - 2026-11-10
 
